@@ -1,0 +1,8 @@
+# Shell 脚本强制 LF（Linux 容器内执行，CRLF 会导致 /bin/bash^M 错误）
+*.sh text eol=lf
+supervisord.conf text eol=lf
+*.conf text eol=lf
+Dockerfile text eol=lf
+
+# 其余文本文件默认行为
+* text=auto
