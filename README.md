@@ -59,24 +59,15 @@ docker compose up --build
 ├── scripts/                # first-run-init / backup / restore / health-check
 ├── portal/                 # 导航页
 ├── config/                 # Hermes 种子配置 + rclone 模板
-├── .github/workflows/      # keepalive 保活（GET 状态→仅 Stopped 才 deploy）
-└── docs/                   # 架构方案、安全审计报告、最终方案文档
+└── .github/workflows/      # keepalive 保活（GET 状态→仅 Stopped 才 deploy）
 ```
 
 ## 安全模型
 
 三道门认证：魔搭平台登录 → Nginx Basic Auth → 各应用自身认证（VNC 密码 / Flowise 凭据）。
 
-关键措施：Secret 全部运行时注入（镜像零密钥）、htpasswd bcrypt、敏感文件 chmod 600、noVNC SHA256 校验、`/api/` 不进路由表、内部端口 Nginx 层双保险防护。详见 [docs/security-hardening-supplement.md](docs/security-hardening-supplement.md) 与 [docs/audits/](docs/audits/)。
+关键措施：Secret 全部运行时注入（镜像零密钥）、htpasswd bcrypt、敏感文件 chmod 600、noVNC SHA256 校验、`/api/` 不进路由表、内部端口 Nginx 层双保险防护。
 
 ## 模型集成
 
 混合模式：本地 `unsloth/Qwen3-8B-GGUF/Qwen3-8B-Q4_K_M.gguf`（llama.cpp，日常对话）+ ModelScope API（Qwen3-235B，复杂推理，免费 2000 次/天）。模型首次启动自动下载（约 5GB），带 SHA256 完整性校验；下载失败自动禁用 llama.cpp，不影响其他服务。
-
-## 文档
-
-- [最终方案文档](docs/最终方案文档.md) — 全部 11 项决策的权威合并记录
-- [架构方案](docs/Zephyr-AI-Desktop-架构方案.md) — 决策点拆解与选项对比
-- [安全审计报告（模型层）](docs/audits/SECURITY-AUDIT-MODEL-LAYER.md)
-- [架构审计报告](docs/audits/ARCHITECTURE-AUDIT-FULL.md)
-- [容器化评估报告](docs/CONTAINER-ASSESSMENT-REPORT.md)
