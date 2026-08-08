@@ -175,16 +175,18 @@ RUN useradd -m -s /bin/bash hermes && \
     chown hermes:hermes /opt/hermes
 
 # 克隆 Hermes Agent
-# NOTE: 仓库地址和版本号需用户确认后替换
-# 修复 shell 优先级 bug：原写法 A || B && C 中，A 成功时 chown 会被跳过
-ARG HERMES_AGENT_REPO=https://github.com/NousResearch/hermes.git
-ARG HERMES_AGENT_VERSION=v0.18.2
-RUN { git clone --branch ${HERMES_AGENT_VERSION} --depth 1 \
-        ${HERMES_AGENT_REPO} /opt/hermes-src || \
-      git clone --depth 1 ${HERMES_AGENT_REPO} /opt/hermes-src; } && \
+# A7 修复（2026-08-09 经 GitHub API 核实）：
+#   原占位符 NousResearch/hermes.git 不存在（404）；
+#   真实仓库是 NousResearch/hermes-agent，tag 为日期格式（v2026.x.x），v0.18.2 不存在。
+#   已移除静默回退：tag 克隆失败即构建失败，保证构建产物版本可控。
+ARG HERMES_AGENT_REPO=https://github.com/NousResearch/hermes-agent.git
+ARG HERMES_AGENT_VERSION=v2026.8.3
+RUN git clone --branch ${HERMES_AGENT_VERSION} --depth 1 \
+      ${HERMES_AGENT_REPO} /opt/hermes-src && \
     chown -R hermes:hermes /opt/hermes-src
 
 # 安装 Hermes Agent 依赖
+# 末尾 command -v hermes 校验：console script 未生成则构建失败（快速失败）
 RUN cd /opt/hermes-src && \
     if [ -f requirements.txt ]; then \
         pip install --no-cache-dir -r requirements.txt; \
@@ -195,7 +197,8 @@ RUN cd /opt/hermes-src && \
     # 拷贝到运行时目录
     cp -a /opt/hermes-src/. /opt/hermes/ && \
     rm -rf /opt/hermes-src && \
-    chown -R hermes:hermes /opt/hermes
+    chown -R hermes:hermes /opt/hermes && \
+    command -v hermes
 
 # ── 层 4: Hermes Studio（从 Stage 2 拷贝构建产物）──────────────────────────
 COPY --from=studio-builder /opt/hermes-studio /opt/hermes-studio
@@ -290,10 +293,11 @@ ENV LLAMA_CPP_MODEL_ALIAS=qwen3-8b-local
 ENV LLAMA_CPP_API_KEY=sk-zephyr-local-internal
 ENV OPENWEBUI_DEFAULT_MODEL=qwen3-8b-local
 
-# Hermes Gateway 认证令牌（supervisord.conf %(ENV_HERMES_API_KEY)s 引用）
-# 必须在此定义兜底值，否则用户未注入 HERMES_API_KEY Secret 时
-# supervisord 解析 %(ENV_HERMES_API_KEY)s 失败 → hermes-gateway 无法启动。
-# 空值 = 不启用令牌认证（Gateway 仅绑 127.0.0.1，安全边界由 Nginx 层把守）。
+# Hermes Gateway API 密钥（supervisord.conf %(ENV_HERMES_API_KEY)s 引用，
+# 映射为 gateway 真实的 API_SERVER_KEY 环境变量）
+# 必须在此定义兜底值，否则 supervisord 解析 %(ENV_HERMES_API_KEY)s 失败。
+# 空值由 entrypoint.sh setup_hermes_api_key() 自动生成 32 位强密钥填充
+# （gateway 的 api_server 平台要求密钥 >=16 位否则不启动）
 ENV HERMES_API_KEY=""
 
 # Flowise 凭据兜底（supervisord.conf %(ENV_FLOWISE_USER)s / %(ENV_FLOWISE_PASSWORD)s 引用）
@@ -317,9 +321,12 @@ RUN apt-get update && \
 
 EXPOSE 7860
 
-# 健康检查（每 30 秒检测 Nginx 是否响应）
-HEALTHCHECK --interval=30s --timeout=10s --start-period=60s --retries=3 \
-    CMD curl -sf http://127.0.0.1:7860/health || exit 1
+# 健康检查（A8 修复：接入完整健康检查脚本）
+# 原实现仅 curl /health（Nginx 活着即判定健康，内部服务死亡无法感知）；
+# health-check.sh 检查 Nginx HTTP + supervisord 状态（硬失败）
+# + nginx/Xvnc/noVNC/hermes-gateway 进程存活（仅告警）
+HEALTHCHECK --interval=30s --timeout=15s --start-period=60s --retries=3 \
+    CMD /opt/scripts/health-check.sh || exit 1
 
 # 持久化卷声明（仅供文档参考，实际持久化由 ModelScope /mnt/workspace 管理）
 VOLUME ["/mnt/workspace"]

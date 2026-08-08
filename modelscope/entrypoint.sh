@@ -401,6 +401,47 @@ EOF
 }
 
 # ---------------------------------------------------------------------------
+# Hermes Gateway API 密钥准备（BUG-7 修复的配套项）
+# ---------------------------------------------------------------------------
+# 真实机制（对照 NousResearch/hermes-agent 核实，2026-08-09）：
+#   gateway 的 api_server 平台只在 API_SERVER_KEY 可用（>=16 位）时才注册启动
+#   （gateway/config.py _has_usable_api_server_key → has_usable_secret min_length=16）。
+#   密钥为空 = api_server 不启动 = 内部调用全部连不上 8642。
+# 策略与 Flowise 凭据一致：Secret 注入 > 持久化盘复用 > 自动生成强密钥落盘。
+# supervisord.conf 中 API_SERVER_KEY="%(ENV_HERMES_API_KEY)s" 消费此值。
+# ---------------------------------------------------------------------------
+setup_hermes_api_key() {
+    local key_file="${PERSIST_ROOT}/config/hermes-api-key"
+
+    # 用户显式注入：校验强度（api_server 拒绝 <16 位的密钥）
+    if [ -n "${HERMES_API_KEY:-}" ]; then
+        if [ ${#HERMES_API_KEY} -lt 16 ]; then
+            fail "HERMES_API_KEY too short (${#HERMES_API_KEY} chars): gateway api_server requires >=16 chars, or leave it empty to auto-generate"
+        fi
+        log "Hermes API key provided via environment (${#HERMES_API_KEY} chars)"
+        export HERMES_API_KEY
+        return 0
+    fi
+
+    # 复用持久化盘上已生成的密钥（保证重启后密钥稳定，客户端配置不失效）
+    if [ -f "$key_file" ]; then
+        HERMES_API_KEY="$(cat "$key_file")"
+        export HERMES_API_KEY
+        log "Loaded existing Hermes API key from $key_file"
+        return 0
+    fi
+
+    # 首次启动：自动生成 32 位强密钥并落盘
+    warn "HERMES_API_KEY not set, generating strong key for gateway api_server"
+    HERMES_API_KEY="$(head -c 48 /dev/urandom | base64 | tr -d '/+=' | cut -c1-32)"
+    export HERMES_API_KEY
+
+    printf '%s' "$HERMES_API_KEY" > "$key_file"
+    chmod 600 "$key_file"
+    log "Hermes API key generated and saved to $key_file (chmod 600)"
+}
+
+# ---------------------------------------------------------------------------
 # A1 修复：调用首次运行初始化脚本
 # ---------------------------------------------------------------------------
 # 背景（云鹤-架构审计师 架构审计报告 A1）：
@@ -442,6 +483,7 @@ main() {
     generate_vnc_password
     generate_rclone_config
     setup_flowise_credentials
+    setup_hermes_api_key
 
     # Step 3: 最终权限校验
     final_permission_check
