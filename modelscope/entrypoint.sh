@@ -62,6 +62,12 @@ init_persistence() {
     create_safe_symlink "${PERSIST_ROOT}/hermes-studio" "/root/.hermes-web-ui"
     create_safe_symlink "${PERSIST_ROOT}/open-webui"    "/app/backend/data"
     create_safe_symlink "${PERSIST_ROOT}/desktop"       "/root/Desktop"
+    # hermes 用户家目录持久化（BUG-8 修复配套）：
+    # studio 的默认 profile 目录是 ~/.hermes（hermes-profile.ts），
+    # 数据目录默认 ~/.hermes-web-ui——两者都软链到持久化盘，
+    # 与 supervisord 显式注入的 HERMES_HOME/HERMES_WEB_UI_HOME 双保险一致
+    create_safe_symlink "${PERSIST_ROOT}/hermes"        "/home/hermes/.hermes"
+    create_safe_symlink "${PERSIST_ROOT}/hermes-studio" "/home/hermes/.hermes-web-ui"
 
     # 确保 hermes 用户对持久化目录有读写权限
     # Hermes Gateway / Studio / Open WebUI / llama.cpp 均以 hermes 用户运行

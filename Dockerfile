@@ -55,28 +55,38 @@ FROM ubuntu:24.04 AS studio-builder
 
 ENV DEBIAN_FRONTEND=noninteractive
 
+# node-pty 原生模块编译需要 python3/make/g++（BUG-9 修复配套）
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    git ca-certificates curl && \
+    git ca-certificates curl python3 make g++ && \
     rm -rf /var/lib/apt/lists/*
 
-# Node.js 22 LTS
-RUN curl -fsSL https://deb.nodesource.com/setup_22.x | bash - && \
+# Node.js 24（BUG-9 修复：hermes-studio engines 要求 node>=23，
+# 官方 Dockerfile 使用 Node 24.15.0；setup_24.x 存在性已核实）
+RUN curl -fsSL https://deb.nodesource.com/setup_24.x | bash - && \
     apt-get install -y --no-install-recommends nodejs && \
     rm -rf /var/lib/apt/lists/*
 
 # 克隆并构建 Hermes Studio
-# NOTE: 仓库地址和版本号需用户确认后替换
+# v0.6.39 tag 存在性已核实；移除静默回退，克隆失败即构建失败（同 A7 修复原则）
 ARG HERMES_STUDIO_REPO=https://github.com/EKKOLearnAI/hermes-studio.git
 ARG HERMES_STUDIO_VERSION=v0.6.39
 RUN git clone --branch ${HERMES_STUDIO_VERSION} --depth 1 \
-      ${HERMES_STUDIO_REPO} /opt/hermes-studio || \
-    git clone --depth 1 ${HERMES_STUDIO_REPO} /opt/hermes-studio
+      ${HERMES_STUDIO_REPO} /opt/hermes-studio
 
+# BUG-8/BUG-9 修复：构建序列对齐官方 Dockerfile
+#   原写法 `npm ci --omit=dev || npm install && npm run build` 有两个 bug：
+#   ① shell 优先级 A||(B&&C&&D)：npm ci 成功时 build 根本不会执行，dist/ 不存在
+#   ② --omit=dev 跳过 devDependencies，而 vite/typescript 等构建工具都在 devDeps
+#   官方序列：--ignore-scripts 跳过 postinstall → 单独重建 node-pty 原生模块
+#   → build → prune 掉 devDeps（运行时只需要 prod 依赖 + dist）
 WORKDIR /opt/hermes-studio
-RUN npm ci --omit=dev || npm install && \
+RUN npm ci --ignore-scripts && \
+    npm rebuild node-pty && \
     npm run build && \
-    # 清理 node_modules 中的缓存
-    npm cache clean --force
+    npm prune --omit=dev && \
+    npm cache clean --force && \
+    # 校验生产入口存在（dist/server/index.js 是 Koa 服务器入口）
+    ls dist/server/index.js
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Stage 3: 最终运行镜像
@@ -156,8 +166,10 @@ RUN add-apt-repository ppa:deadsnakes/ppa && \
     ln -sf /usr/bin/python3.11 /usr/local/bin/python && \
     rm -rf /var/lib/apt/lists/*
 
-# 2b: Node.js 22 LTS（NodeSource）
-RUN curl -fsSL https://deb.nodesource.com/setup_22.x | bash - && \
+# 2b: Node.js 24（NodeSource）
+# BUG-9 修复：hermes-studio 生产服务器（node dist/server/index.js）要求 node>=23，
+# 与 studio-builder 构建阶段保持同一主版本，避免 ABI/语法不兼容
+RUN curl -fsSL https://deb.nodesource.com/setup_24.x | bash - && \
     apt-get install -y --no-install-recommends nodejs && \
     npm install -g npm@latest && \
     rm -rf /var/lib/apt/lists/*

@@ -1,30 +1,39 @@
 # =============================================================================
-# Zephyr AI Desktop — Hermes Seed Config
+# Zephyr AI Desktop — Hermes 种子配置
 # =============================================================================
-# 首次启动时由 first-run-init.sh 拷贝到 /mnt/workspace/zephyr/config/hermes-seed/
-# 用户后续可在运行时修改持久化路径中的副本
+# 首次启动时由 first-run-init.sh 拷贝到 $HERMES_HOME/config.yaml
+# （即 /mnt/workspace/zephyr/hermes/config.yaml，已存在则不覆盖）。
+# 用户后续可在持久化盘直接修改 config.yaml。
 #
-# 维护者：海豚-容器工程师
+# 格式依据（2026-08-09 对照 NousResearch/hermes-agent 源码核实）：
+#   - 配置路径：hermes_cli/config.py get_config_path() = get_hermes_home()/config.yaml；
+#     HERMES_HOME 环境变量决定目录位置（entrypoint.sh 已注入）
+#   - model 段：hermes_cli/runtime_provider.py 支持 default/provider/base_url/api_key，
+#     provider: custom + base_url 为官方自定义端点写法（docs/integrations/providers.md）
+#   - gateway api_server 不在此文件配置：API_SERVER_KEY 环境变量（supervisord 注入，
+#     entrypoint 自动生成）达到 >=16 位即自动注册并启用平台（gateway/config.py
+#     _has_usable_api_server_key），默认绑 127.0.0.1:8642
+#   - agent.reasoning_effort 合法值 none|minimal|low|medium|high|xhigh|max|ultra；
+#     本地模型兼容性未经验证，暂不设置
+#   - 数据目录（sessions/memories/skills）由 HERMES_HOME 自动派生，无需配置键
+#
+# 维护者：海豚-容器工程师（2026-08-09 重写为真实格式）
 # =============================================================================
 
-# Hermes Agent 基础配置
-agent:
-  name: "Zephyr"
-  model: "qwen3-8b-local"
-  api_base: "http://127.0.0.1:8081/v1"
+# 默认模型：本地 llama.cpp（OpenAI 兼容端点）
+# api_key 与 llama.cpp 的 --api-key（LLAMA_CPP_API_KEY）保持一致
+model:
+  default: qwen3-8b-local
+  provider: custom
+  base_url: http://127.0.0.1:8081/v1
+  api_key: sk-zephyr-local-internal
 
-# 数据持久化路径（已在 entrypoint.sh 中软链接到 /mnt/workspace/zephyr/）
-data_dir: "/mnt/workspace/zephyr/hermes"
-skills_dir: "/mnt/workspace/zephyr/hermes/skills"
-memories_dir: "/mnt/workspace/zephyr/hermes/memories"
-sessions_dir: "/mnt/workspace/zephyr/hermes/sessions"
-
-# Gateway 配置
-gateway:
-  host: "127.0.0.1"
-  port: 8642
-
-# Studio 配置
-studio:
-  host: "127.0.0.1"
-  port: 8648
+# 如需追加 ModelScope 云端模型作为第二供应商，参考以下格式自行添加
+# （API Key 从 https://modelscope.cn/my/myaccesstoken 获取；建议用 key_env
+# 引用环境变量而非硬编码），并把 model.provider 改为 custom:modelscope：
+# providers:
+#   modelscope:
+#     api: https://api-inference.modelscope.cn/v1
+#     key_env: MODELSCOPE_API_KEY
+#     transport: chat_completions
+#     default_model: Qwen3-235B-A22B-Instruct-2507

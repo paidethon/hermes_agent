@@ -127,22 +127,33 @@ ensure_model() {
 # ---------------------------------------------------------------------------
 # 3. 生成 Hermes 种子配置（如不存在）
 # ---------------------------------------------------------------------------
+# 路径修复（2026-08-09 对照 hermes-agent 源码核实）：
+#   hermes 读取配置的路径是 get_hermes_home()/config.yaml，
+#   即 $HERMES_HOME/config.yaml = /mnt/workspace/zephyr/hermes/config.yaml
+#   （hermes_cli/config.py get_config_path()）。
+#   原实现拷贝到 config/hermes-seed/ 目录，hermes 根本不会读取 → 死代码。
+# ---------------------------------------------------------------------------
 ensure_hermes_seed() {
-    local seed_dir="/opt/hermes-seed"
-    local config_dir="${PERSIST_ROOT}/config/hermes-seed"
+    local seed_config="/opt/hermes-seed/config.yaml"
+    local hermes_home="${PERSIST_ROOT}/hermes"
+    local target_config="${hermes_home}/config.yaml"
 
-    if [ ! -d "$seed_dir" ]; then
+    if [ ! -f "$seed_config" ]; then
+        log "No hermes seed config at $seed_config, skipping"
         return 0
     fi
 
-    mkdir -p "$config_dir"
+    mkdir -p "$hermes_home"
 
-    # 如果配置不存在，从种子拷贝
-    if [ ! -f "${config_dir}/config.yaml" ]; then
-        log "Seeding Hermes config..."
-        cp -a "${seed_dir}/." "$config_dir/"
-        chown -R hermes:hermes "$config_dir"
+    # 仅当用户尚无配置时落种子（不覆盖已有配置）
+    if [ ! -f "$target_config" ]; then
+        log "Seeding Hermes config to $target_config..."
+        cp "$seed_config" "$target_config"
+        chown hermes:hermes "$target_config"
+        chmod 600 "$target_config"
         log "Hermes seed config deployed"
+    else
+        log "Hermes config already exists at $target_config, keeping user config"
     fi
 }
 
