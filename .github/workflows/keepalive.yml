@@ -1,0 +1,136 @@
+# =============================================================================
+# Zephyr AI Desktop — Keepalive Workflow
+# =============================================================================
+# 修复前（问题）：无条件 POST deploy = 每天强制重建容器，导致数据重置
+# 修复后（方案 §9.4）：先 GET 状态，仅当 Stopped 时才 deploy
+#   - 每 6 小时检查一次
+#   - 最多重试 3 次，失败则告警
+#   - Secret 通过 env: 传递，不嵌入 shell（§9.5 低风险修复）
+#   - STATE 为空/"null" 时加 ::error:: 分支（§9.5 低风险修复）
+#
+# 维护者：行者-Linux专家
+# =============================================================================
+
+name: Keepalive
+
+on:
+  schedule:
+    - cron: '0 */6 * * *'    # 每 6 小时检查
+  workflow_dispatch:           # 支持手动触发
+
+jobs:
+  keepalive:
+    runs-on: ubuntu-latest
+    steps:
+      # ---------------------------------------------------------------------
+      # Step 1: 检查 ModelScope Space 状态
+      # ---------------------------------------------------------------------
+      - name: Check space status
+        id: status
+        env:
+          MODELSCOPE_TOKEN: ${{ secrets.MODELSCOPE_TOKEN }}
+          SPACE_ID: ${{ secrets.SPACE_ID }}
+        run: |
+          set -euo pipefail
+
+          # 前置校验：Secret 是否存在
+          if [ -z "${MODELSCOPE_TOKEN:-}" ] || [ -z "${SPACE_ID:-}" ]; then
+            echo "::error::MODELSCOPE_TOKEN or SPACE_ID secret is not set"
+            echo "state=error" >> "$GITHUB_OUTPUT"
+            exit 1
+          fi
+
+          echo "Checking status of space: ${SPACE_ID}"
+
+          RESPONSE=$(curl -sf --max-time 30 -X GET \
+            -H "Authorization: Bearer ${MODELSCOPE_TOKEN}" \
+            -H "Content-Type: application/json" \
+            "https://modelscope.cn/api/v1/studio/${SPACE_ID}/status" 2>&1) || {
+            echo "::error::Failed to get space status: ${RESPONSE}"
+            echo "state=error" >> "$GITHUB_OUTPUT"
+            exit 0  # 不阻断 workflow，让后续 step 的 if 判断处理
+          }
+
+          # 解析状态字段（兼容多种响应格式）
+          STATE=$(echo "${RESPONSE}" | jq -r '.Data.Status // .data.status // .status // empty' 2>/dev/null || echo "")
+
+          # §9.5 低风险修复：STATE 为空或 "null" 时报错
+          if [ -z "${STATE}" ] || [ "${STATE}" = "null" ]; then
+            echo "::error::Could not parse space status from response: ${RESPONSE}"
+            echo "state=unknown" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          echo "Space state: ${STATE}"
+          echo "state=${STATE}" >> "$GITHUB_OUTPUT"
+
+      # ---------------------------------------------------------------------
+      # Step 2: 仅当状态为 Stopped 时才执行 deploy
+      # ---------------------------------------------------------------------
+      - name: Deploy only if stopped
+        if: steps.status.outputs.state == 'Stopped'
+        env:
+          MODELSCOPE_TOKEN: ${{ secrets.MODELSCOPE_TOKEN }}
+          SPACE_ID: ${{ secrets.SPACE_ID }}
+          ALERT_WEBHOOK: ${{ secrets.ALERT_WEBHOOK }}
+        run: |
+          set -uo pipefail
+
+          MAX_RETRIES=3
+          RETRY=0
+          SLEEP_INTERVAL=10
+
+          while [ $RETRY -lt $MAX_RETRIES ]; do
+            RETRY=$((RETRY + 1))
+            echo "Deploy attempt ${RETRY}/${MAX_RETRIES}..."
+
+            RESPONSE=$(curl -sf --max-time 60 -X POST \
+              -H "Authorization: Bearer ${MODELSCOPE_TOKEN}" \
+              -H "Content-Type: application/json" \
+              "https://modelscope.cn/api/v1/studio/${SPACE_ID}/deploy" 2>&1) && {
+              echo "Deploy succeeded on attempt ${RETRY}: ${RESPONSE}"
+              exit 0
+            }
+
+            echo "Deploy attempt ${RETRY} failed: ${RESPONSE}"
+            if [ $RETRY -lt $MAX_RETRIES ]; then
+              echo "Waiting ${SLEEP_INTERVAL}s before retry..."
+              sleep $SLEEP_INTERVAL
+            fi
+          done
+
+          # 所有重试均失败
+          echo "::error::All ${MAX_RETRIES} deploy attempts failed for space ${SPACE_ID}"
+
+          # 发送告警 webhook（如果配置了）
+          if [ -n "${ALERT_WEBHOOK:-}" ]; then
+            echo "Sending alert to webhook..."
+            curl -sf --max-time 10 -X POST "${ALERT_WEBHOOK}" \
+              -H "Content-Type: application/json" \
+              -d "{\"text\":\"🚨 Zephyr AI Desktop keepalive failed: space ${SPACE_ID} could not be deployed after ${MAX_RETRIES} attempts. Last error: ${RESPONSE}\"}" \
+              || echo "::warning::Failed to send alert webhook"
+          fi
+
+          exit 1
+
+      # ---------------------------------------------------------------------
+      # Step 3: 状态摘要（用于 GitHub Actions 日志）
+      # §9.5 低风险修复：SPACE_ID 改用 env: 传递，不再在 shell 中直接插值 secret
+      # ---------------------------------------------------------------------
+      - name: Status summary
+        if: always()
+        env:
+          SPACE_ID: ${{ secrets.SPACE_ID }}
+        run: |
+          STATE="${{ steps.status.outputs.state }}"
+          echo "=== Keepalive Summary ==="
+          echo "Space: ${SPACE_ID}"
+          echo "State: ${STATE}"
+          echo "Time: $(date -u '+%Y-%m-%d %H:%M:%S UTC')"
+          if [ "${STATE}" = "Running" ]; then
+            echo "✅ Space is running, no action needed"
+          elif [ "${STATE}" = "Stopped" ]; then
+            echo "🔄 Space was stopped, deploy attempted"
+          else
+            echo "⚠️ Could not determine space state"
+          fi

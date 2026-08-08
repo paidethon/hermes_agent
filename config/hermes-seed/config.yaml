@@ -1,0 +1,30 @@
+# =============================================================================
+# Zephyr AI Desktop — Hermes Seed Config
+# =============================================================================
+# 首次启动时由 first-run-init.sh 拷贝到 /mnt/workspace/zephyr/config/hermes-seed/
+# 用户后续可在运行时修改持久化路径中的副本
+#
+# 维护者：海豚-容器工程师
+# =============================================================================
+
+# Hermes Agent 基础配置
+agent:
+  name: "Zephyr"
+  model: "qwen3-8b-local"
+  api_base: "http://127.0.0.1:8081/v1"
+
+# 数据持久化路径（已在 entrypoint.sh 中软链接到 /mnt/workspace/zephyr/）
+data_dir: "/mnt/workspace/zephyr/hermes"
+skills_dir: "/mnt/workspace/zephyr/hermes/skills"
+memories_dir: "/mnt/workspace/zephyr/hermes/memories"
+sessions_dir: "/mnt/workspace/zephyr/hermes/sessions"
+
+# Gateway 配置
+gateway:
+  host: "127.0.0.1"
+  port: 8642
+
+# Studio 配置
+studio:
+  host: "127.0.0.1"
+  port: 8648

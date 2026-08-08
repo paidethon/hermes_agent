@@ -1,0 +1,17 @@
+# 密钥与环境变量（绝不提交）
+.env
+*.pem
+*.key
+rclone.conf
+
+# 压缩包（项目资料归档，不进版本库）
+*.zip
+
+# 操作系统与编辑器
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
+
+# 日志
+*.log

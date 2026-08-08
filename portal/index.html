@@ -1,0 +1,97 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Zephyr AI Desktop</title>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            background: linear-gradient(135deg, #0f0f23 0%, #1a1a3e 50%, #2d1b69 100%);
+            color: #e0e0e0;
+            min-height: 100vh;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+        }
+        .portal {
+            text-align: center;
+            max-width: 600px;
+            padding: 2rem;
+        }
+        .portal h1 {
+            font-size: 2.5rem;
+            margin-bottom: 0.5rem;
+            background: linear-gradient(90deg, #64f7d6, #6cb6ff, #c89bff);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+        }
+        .portal .subtitle {
+            color: #8899bb;
+            margin-bottom: 2rem;
+            font-size: 1rem;
+        }
+        .cards {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+            gap: 1rem;
+        }
+        .card {
+            background: rgba(255,255,255,0.05);
+            border: 1px solid rgba(255,255,255,0.1);
+            border-radius: 12px;
+            padding: 1.5rem;
+            text-decoration: none;
+            color: #e0e0e0;
+            transition: all 0.3s ease;
+        }
+        .card:hover {
+            background: rgba(255,255,255,0.1);
+            border-color: rgba(100,247,214,0.3);
+            transform: translateY(-4px);
+        }
+        .card .icon {
+            font-size: 2rem;
+            margin-bottom: 0.5rem;
+        }
+        .card .label {
+            font-size: 0.95rem;
+            font-weight: 500;
+        }
+        .card .desc {
+            font-size: 0.8rem;
+            color: #8899bb;
+            margin-top: 0.25rem;
+        }
+    </style>
+</head>
+<body>
+    <div class="portal">
+        <h1>Zephyr AI Desktop</h1>
+        <p class="subtitle">AI-Native Desktop Environment</p>
+        <div class="cards">
+            <a class="card" href="/desktop/">
+                <div class="icon">🖥️</div>
+                <div class="label">Desktop</div>
+                <div class="desc">KDE 桌面</div>
+            </a>
+            <a class="card" href="/hermes/">
+                <div class="icon">🤖</div>
+                <div class="label">Hermes</div>
+                <div class="desc">Agent Gateway</div>
+            </a>
+            <a class="card" href="/chat/">
+                <div class="icon">💬</div>
+                <div class="label">Chat</div>
+                <div class="desc">Open WebUI</div>
+            </a>
+            <a class="card" href="/flow/">
+                <div class="icon">🔗</div>
+                <div class="label">Flowise</div>
+                <div class="desc">工作流编辑</div>
+            </a>
+        </div>
+    </div>
+</body>
+</html>

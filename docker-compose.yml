@@ -1,0 +1,92 @@
+# =============================================================================
+# Zephyr AI Desktop — docker-compose.yml
+# =============================================================================
+# 本地开发/测试用，实际部署使用 ModelScope Custom Docker
+# 用法：docker compose up --build
+#
+# 维护者：海豚-容器工程师
+# =============================================================================
+
+services:
+  zephyr:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      args:
+        PRELOAD_QWEN3_8B: "0"
+        ENABLE_FLOWISE: "1"
+        ENABLE_ANYTHINGLLM: "0"
+        ENABLE_LLAMA_CPP: "1"
+    image: zephyr-ai-desktop:latest
+    container_name: zephyr-desktop
+
+    ports:
+      - "7860:7860"
+
+    volumes:
+      # ModelScope 持久化路径（本地用 named volume 模拟）
+      - zephyr-data:/mnt/workspace
+      # 开发时挂载配置文件（可选）
+      # - ./modelscope/entrypoint.sh:/opt/entrypoint.sh:ro
+      # - ./modelscope/supervisord.conf:/etc/supervisor/conf.d/supervisord.conf:ro
+      # - ./modelscope/nginx/nginx.conf:/etc/nginx/nginx.conf:ro
+      # - ./modelscope/nginx/portal.conf:/etc/nginx/conf.d/portal.conf:ro
+
+    environment:
+      # === Portal 认证 ===
+      PORTAL_USER: ${PORTAL_USER:-admin}
+      PORTAL_PASSWORD: ${PORTAL_PASSWORD:?PORTAL_PASSWORD is required}
+
+      # === VNC 桌面 ===
+      VNC_PASSWORD: ${VNC_PASSWORD:?VNC_PASSWORD is required}
+
+      # === OneDrive 备份 ===
+      ONEDRIVE_TOKEN: ${ONEDRIVE_TOKEN:-}
+      ONEDRIVE_DRIVE_ID: ${ONEDRIVE_DRIVE_ID:-}
+      RCLONE_CRYPT_PASSWORD: ${RCLONE_CRYPT_PASSWORD:-}
+      RCLONE_CRYPT_PASSWORD2: ${RCLONE_CRYPT_PASSWORD2:-}
+
+      # === Hermes ===
+      HERMES_API_KEY: ${HERMES_API_KEY:-}
+
+      # === ModelScope API ===
+      MODELSCOPE_API_KEY: ${MODELSCOPE_API_KEY:-}
+
+      # === 模型配置 ===
+      ENABLE_LLAMA_CPP: "1"
+      LLAMA_CPP_THREADS: "2"
+      LLAMA_CPP_CTX_SIZE: "8192"
+      OPENWEBUI_DEFAULT_MODEL: "qwen3-8b-local"
+
+      # === 可选模块 ===
+      ENABLE_FLOWISE: "1"
+      ENABLE_ANYTHINGLLM: "0"
+
+      # === Flowise 凭据（可选：留空则 entrypoint 自动生成并持久化）===
+      FLOWISE_USER: ${FLOWISE_USER:-}
+      FLOWISE_PASSWORD: ${FLOWISE_PASSWORD:-}
+
+      # === 时区 ===
+      TZ: Asia/Shanghai
+
+    restart: unless-stopped
+
+    # 资源限制（按需调整）
+    deploy:
+      resources:
+        limits:
+          cpus: "4"
+          memory: 8G
+        reservations:
+          memory: 2G
+
+    healthcheck:
+      test: ["CMD", "curl", "-sf", "http://127.0.0.1:7860/health"]
+      interval: 30s
+      timeout: 10s
+      start_period: 60s
+      retries: 3
+
+volumes:
+  zephyr-data:
+    driver: local

@@ -1,0 +1,77 @@
+# =============================================================================
+# Zephyr AI Desktop — Dockerfile 模型层片段
+# =============================================================================
+# 此片段由海豚-容器工程师合并进主 Dockerfile 的层 6 位置。
+# 方案文档 §10.2 定义的层 6：ModelScope SDK + 模型预下载
+#
+# 维护者：极客-AI模型通
+# =============================================================================
+
+# ---------------------------------------------------------------------------
+# 层 6: ModelScope SDK + 模型预下载
+# ---------------------------------------------------------------------------
+
+# 6.1 安装 modelscope CLI（固定版本，防供应链攻击）
+RUN pip install --no-cache-dir "modelscope==1.39.1"
+
+# 6.2 设置模型缓存路径（持久化盘，重建不丢）
+ENV MODELSCOPE_CACHE=/mnt/workspace/zephyr/models
+
+# 6.3 预下载 Qwen3-8B-Q4_K_M.gguf（构建时下载，避免首次启动等很久）
+#     修正：方案文档写 Qwen/Qwen3-8B-GGUF 是错误的，魔搭社区实际仓库是
+#     unsloth/Qwen3-8B-GGUF，文件名 Qwen3-8B-Q4_K_M.gguf（大写 Q）
+ARG PRELOAD_QWEN3_8B=1
+RUN if [ "$PRELOAD_QWEN3_8B" = "1" ]; then \
+      mkdir -p /mnt/workspace/zephyr/models && \
+      modelscope download \
+        --model unsloth/Qwen3-8B-GGUF \
+        --include "Qwen3-8B-Q4_K_M.gguf" \
+        --local_dir /mnt/workspace/zephyr/models/unsloth/Qwen3-8B-GGUF; \
+    fi
+
+# 6.4 可选：预下载 Qwen3-1.7B-Q4_K_M（轻量备用模型，~1.1 GB）
+#     默认不下载，通过 Docker build-arg 控制
+ARG PRELOAD_QWEN3_1_7B=0
+RUN if [ "$PRELOAD_QWEN3_1_7B" = "1" ]; then \
+      modelscope download \
+        --model unsloth/Qwen3-1.7B-GGUF \
+        --include "Qwen3-1.7B-Q4_K_M.gguf" \
+        --local_dir /mnt/workspace/zephyr/models/unsloth/Qwen3-1.7B-GGUF; \
+    fi
+
+# 6.5 COPY 模型层脚本和配置
+COPY scripts/model-download.sh /opt/zephyr/scripts/model-download.sh
+COPY scripts/modelscope-api-test.py /opt/zephyr/scripts/modelscope-api-test.py
+COPY config/llama-cpp.env /opt/zephyr/config/llama-cpp.env
+COPY config/open-webui-models.env /opt/zephyr/config/open-webui-models.env
+RUN chmod +x /opt/zephyr/scripts/model-download.sh /opt/zephyr/scripts/modelscope-api-test.py
+
+# 6.6 默认环境变量（可被 ModelScope Secrets 覆盖）
+ENV ENABLE_LLAMA_CPP=1 \
+    LLAMA_CPP_CTX_SIZE=8192 \
+    LLAMA_CPP_THREADS=1 \
+    LLAMA_CPP_BATCH_SIZE=512 \
+    LLAMA_CPP_NGPU_LAYERS=0 \
+    LLAMA_CPP_MODEL_ALIAS=qwen3-8b-local \
+    LLAMA_CPP_API_KEY=sk-zephyr-local-internal \
+    LLAMA_CPP_MODEL_PATH=/mnt/workspace/zephyr/models/unsloth/Qwen3-8B-GGUF/Qwen3-8B-Q4_K_M.gguf \
+    OPENAI_API_BASE_URL=http://127.0.0.1:8081/v1 \
+    OPENAI_API_KEY=sk-zephyr-local-internal
+
+# ---------------------------------------------------------------------------
+# 注意事项（给海豚-容器工程师）：
+# ---------------------------------------------------------------------------
+# 1. model-download.sh 也可放到 entrypoint.sh 首次启动逻辑中执行，
+#    好处是镜像体积不增大（~5 GB GGUF 不进镜像层），
+#    坏处是首次启动要等 10-20 分钟下载。
+#    如果 ModelScope 构建环境网络好，推荐构建时下载（PRELOAD_QWEN3_8B=1）。
+#    如果构建超时，改 PRELOAD_QWEN3_8B=0，entrypoint 里首次启动下载。
+#
+# 2. entrypoint.sh 需加一段模型存在性检查（行者已确认会加）：
+#    if [ ! -f "$LLAMA_CPP_MODEL_PATH" ] && [ "$ENABLE_LLAMA_CPP" = "1" ]; then
+#        echo "[WARN] Model not found, running model-download.sh..."
+#        /opt/zephyr/scripts/model-download.sh
+#    fi
+#
+# 3. ModelScope API Key 不进镜像层，走 ModelScope Secrets 运行时注入：
+#    MODELSCOPE_API_KEY=ms-xxxxxxxx

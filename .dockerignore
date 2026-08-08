@@ -1,0 +1,30 @@
+# =============================================================================
+# Zephyr AI Desktop — .dockerignore
+# 减小构建上下文，排除与镜像构建无关的文件
+# =============================================================================
+
+# 版本控制
+.git
+.gitignore
+.github
+
+# 文档与审计记录（不进镜像）
+docs/
+*.md
+!modelscope/MODEL-INTEGRATION-REPORT.md
+
+# 本地开发文件
+.env
+.env.example
+docker-compose.yml
+.dockerignore
+
+# 压缩包与临时文件
+*.zip
+*.tar.gz
+*.log
+
+# 编辑器
+.vscode
+.idea
+.DS_Store
