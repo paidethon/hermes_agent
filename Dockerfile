@@ -116,8 +116,10 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     rm -rf /var/lib/apt/lists/*
 
 # 1c: TigerVNC + noVNC 依赖
+# tigervnc-tools 提供 tigervncpasswd（Ubuntu 24.04 起 vncpasswd 更名为
+# tigervncpasswd 且拆到独立包，不装会导致 entrypoint 报 command not found）
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    tigervnc-standalone-server tigervnc-common \
+    tigervnc-standalone-server tigervnc-common tigervnc-tools \
     xterm dbus-x11 x11-utils x11-xserver-utils && \
     rm -rf /var/lib/apt/lists/*
 

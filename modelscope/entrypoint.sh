@@ -218,11 +218,22 @@ generate_vnc_password() {
     fi
 
     # 生成 TigerVNC 密码文件
+    # Ubuntu 24.04 起命令更名为 tigervncpasswd（tigervnc-tools 包提供），
+    # 旧版本为 vncpasswd —— 运行时探测，两者都没有则快速失败
+    local vncpasswd_cmd=""
+    if command -v tigervncpasswd >/dev/null 2>&1; then
+        vncpasswd_cmd="tigervncpasswd"
+    elif command -v vncpasswd >/dev/null 2>&1; then
+        vncpasswd_cmd="vncpasswd"
+    else
+        fail "Neither tigervncpasswd nor vncpasswd found — install tigervnc-tools"
+    fi
+
     mkdir -p /root/.vnc
-    echo "$vnc_password" | vncpasswd -f > /root/.vnc/passwd
+    echo "$vnc_password" | "$vncpasswd_cmd" -f > /root/.vnc/passwd
     chmod 600 /root/.vnc/passwd
 
-    log "VNC password configured (complexity validated)"
+    log "VNC password configured via $vncpasswd_cmd (complexity validated)"
 }
 
 # ---------------------------------------------------------------------------

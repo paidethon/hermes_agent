@@ -52,8 +52,9 @@ check_processes() {
     fi
 
     # VNC（ENABLE_LLAMA_CPP 等不影响 VNC）
-    if ! pgrep -x Xvnc >/dev/null 2>&1; then
-        echo "WARN: Xvnc process not found"
+    # Ubuntu 24.04 进程名为 Xtigervnc（旧系统叫 Xvnc）
+    if ! pgrep -x Xtigervnc >/dev/null 2>&1; then
+        echo "WARN: Xtigervnc process not found"
         errors=$((errors + 1))
     fi
 
