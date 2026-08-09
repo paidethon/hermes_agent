@@ -222,17 +222,21 @@ COPY --from=studio-builder /opt/hermes-studio /opt/hermes-studio
 RUN chown -R hermes:hermes /opt/hermes-studio
 
 # ── 层 5: Open WebUI ────────────────────────────────────────────────────────
-# 全部依赖强制使用预编译 wheel（--only-binary=:all:），避免任何源码构建失败
-# antlr4-python3-runtime 在 Python 3.11 + 新版 setuptools 下构建 wheel 会失败
-# （AttributeError: install_layout），--only-binary 直接跳过
-RUN pip install --no-cache-dir --upgrade pip setuptools wheel && \
-    pip install --no-cache-dir --only-binary=:all: open-webui==0.11.0
+# 坑1：系统 wheel 0.42.0 是 apt 装的 Debian 包（无 pip RECORD 元数据），
+#      pip --upgrade 会先卸载它 → "Cannot uninstall wheel, RECORD file not found"。
+#      用 --ignore-installed 绕过卸载，全新安装工具链。
+# 坑2：antlr4-python3-runtime 是 sdist-only 包，--only-binary=:all: 会直接
+#      "no matching distribution" 失败，所以 open-webui 不加该约束；
+#      新装的 setuptools+wheel 已修复其源码构建的 install_layout 报错。
+RUN pip install --no-cache-dir --ignore-installed pip setuptools wheel && \
+    pip install --no-cache-dir open-webui==0.11.0
 
 # ── 层 6: ModelScope SDK + 模型层（合并极客-AI模型通的 Dockerfile.model-layer）──
 # 修正：方案文档写的 Qwen/Qwen3-8B-GGUF 不存在，实际仓库是 unsloth/Qwen3-8B-GGUF
 #       文件名是 Qwen3-8B-Q4_K_M.gguf（大写 Q）
-# 强制使用预编译 wheel（--only-binary=:all:），固定版本避免不确定依赖解析
-RUN pip install --no-cache-dir --only-binary=:all: "modelscope==1.39.1"
+# 固定版本避免依赖漂移；不加 --only-binary 约束（个别依赖可能需源码构建，
+# 层 5 已装好新版 setuptools+wheel，构建优先于预编译偏好）
+RUN pip install --no-cache-dir "modelscope==1.39.1"
 
 ENV MODELSCOPE_CACHE=/mnt/workspace/zephyr/models
 ENV LLAMA_CPP_MODEL_PATH=/mnt/workspace/zephyr/models/unsloth/Qwen3-8B-GGUF/Qwen3-8B-Q4_K_M.gguf
