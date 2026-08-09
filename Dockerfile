@@ -201,10 +201,11 @@ RUN git clone --branch ${HERMES_AGENT_VERSION} --depth 1 \
 # 注意：hermes-agent 的 pyproject.toml 禁止 wheel/sdist 构建（RuntimeError:
 # Building wheels or sdists for hermes-agent is not supported），
 # 必须用可编辑模式 -e 安装（官方 Dockerfile 同样如此）。
+# requirements.txt 依赖全部强制使用预编译 wheel（--only-binary=:all:）
 # 末尾 command -v hermes 校验：console script 未生成则构建失败（快速失败）
 RUN cd /opt/hermes-src && \
     if [ -f requirements.txt ]; then \
-        pip install --no-cache-dir -r requirements.txt; \
+        pip install --no-cache-dir --only-binary=:all: -r requirements.txt; \
     fi && \
     if [ -f pyproject.toml ]; then \
         uv pip install --system --no-cache -e .; \
@@ -221,16 +222,17 @@ COPY --from=studio-builder /opt/hermes-studio /opt/hermes-studio
 RUN chown -R hermes:hermes /opt/hermes-studio
 
 # ── 层 5: Open WebUI ────────────────────────────────────────────────────────
+# 全部依赖强制使用预编译 wheel（--only-binary=:all:），避免任何源码构建失败
 # antlr4-python3-runtime 在 Python 3.11 + 新版 setuptools 下构建 wheel 会失败
-# （AttributeError: install_layout），需先升级 pip/setuptools 并强制使用预编译 wheel
+# （AttributeError: install_layout），--only-binary 直接跳过
 RUN pip install --no-cache-dir --upgrade pip setuptools wheel && \
-    pip install --no-cache-dir --only-binary=:all: antlr4-python3-runtime && \
-    pip install --no-cache-dir open-webui==0.11.0
+    pip install --no-cache-dir --only-binary=:all: open-webui==0.11.0
 
 # ── 层 6: ModelScope SDK + 模型层（合并极客-AI模型通的 Dockerfile.model-layer）──
 # 修正：方案文档写的 Qwen/Qwen3-8B-GGUF 不存在，实际仓库是 unsloth/Qwen3-8B-GGUF
 #       文件名是 Qwen3-8B-Q4_K_M.gguf（大写 Q）
-RUN pip install --no-cache-dir "modelscope>=1.14.0"
+# 强制使用预编译 wheel（--only-binary=:all:），固定版本避免不确定依赖解析
+RUN pip install --no-cache-dir --only-binary=:all: "modelscope==1.39.1"
 
 ENV MODELSCOPE_CACHE=/mnt/workspace/zephyr/models
 ENV LLAMA_CPP_MODEL_PATH=/mnt/workspace/zephyr/models/unsloth/Qwen3-8B-GGUF/Qwen3-8B-Q4_K_M.gguf
