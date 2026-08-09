@@ -2,7 +2,7 @@
 # =============================================================================
 # Zephyr AI Desktop — Restore Script
 # =============================================================================
-# 从 OneDrive 加密备份恢复数据
+# 从 OneDrive 备份恢复数据（2026-08-09 起移除 crypt 加密层，直接读取明文）
 # 用法：
 #   ./restore.sh                    # 恢复最新备份
 #   ./restore.sh hourly_20260808_1  # 恢复指定备份
@@ -15,7 +15,7 @@ set -euo pipefail
 
 PERSIST_ROOT="/mnt/workspace/zephyr"
 RCLONE_CONF="${PERSIST_ROOT}/config/rclone.conf"
-REMOTE="crypt:zephyr-backup"
+REMOTE="onedrive:zephyr-backup"
 LOG_PREFIX="[restore]"
 
 log()  { echo "${LOG_PREFIX} $*"; }
@@ -31,7 +31,7 @@ fi
 # 列出可用备份
 # ---------------------------------------------------------------------------
 list_backups() {
-    log "Available backups on OneDrive (crypt):"
+    log "Available backups on OneDrive:"
     echo "----------------------------------------"
     rclone --config="$RCLONE_CONF" lsd "${REMOTE}" 2>/dev/null | \
         awk '{print $NF}' | sort -r

@@ -43,12 +43,13 @@ restore_from_onedrive() {
 
     log "Checking OneDrive for backup..."
     local backup_exists
-    backup_exists=$(rclone --config="$rclone_conf" lsf crypt: 2>/dev/null | head -1 || echo "")
+    # 2026-08-09 起移除 crypt 加密层，直接检查 onedrive 明文备份
+    backup_exists=$(rclone --config="$rclone_conf" lsf onedrive:zephyr-backup 2>/dev/null | head -1 || echo "")
 
     if [ -n "$backup_exists" ]; then
         log "Backup found on OneDrive, restoring..."
         rclone --config="$rclone_conf" copy \
-            crypt:zephyr-backup \
+            onedrive:zephyr-backup \
             "${PERSIST_ROOT}" \
             --transfers 4 \
             --checkers 8 \

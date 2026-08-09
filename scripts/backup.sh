@@ -2,7 +2,7 @@
 # =============================================================================
 # Zephyr AI Desktop — Backup Script
 # =============================================================================
-# rclone crypt → OneDrive 加密备份
+# rclone → OneDrive 备份（2026-08-09 起移除 crypt 加密层，直接明文写入）
 # 用法：
 #   ./backup.sh           # 全量备份
 #   ./backup.sh hourly     # 每小时增量备份
@@ -17,7 +17,7 @@ set -euo pipefail
 
 PERSIST_ROOT="/mnt/workspace/zephyr"
 RCLONE_CONF="${PERSIST_ROOT}/config/rclone.conf"
-REMOTE="crypt:zephyr-backup"
+REMOTE="onedrive:zephyr-backup"
 LOG_PREFIX="[backup]"
 
 MODE="${1:-manual}"
@@ -33,8 +33,8 @@ if [ ! -f "$RCLONE_CONF" ]; then
 fi
 
 # 检查 rclone 远程可用
-if ! rclone --config="$RCLONE_CONF" listremotes | grep -q "^crypt:$"; then
-    fail "crypt remote not configured in rclone.conf"
+if ! rclone --config="$RCLONE_CONF" listremotes | grep -q "^onedrive:$"; then
+    fail "onedrive remote not configured in rclone.conf"
 fi
 
 # ---------------------------------------------------------------------------

@@ -40,11 +40,9 @@ services:
       # === VNC 桌面 ===
       VNC_PASSWORD: ${VNC_PASSWORD:?VNC_PASSWORD is required}
 
-      # === OneDrive 备份 ===
+      # === OneDrive 备份（2026-08-09 起移除 crypt 加密层）===
       ONEDRIVE_TOKEN: ${ONEDRIVE_TOKEN:-}
       ONEDRIVE_DRIVE_ID: ${ONEDRIVE_DRIVE_ID:-}
-      RCLONE_CRYPT_PASSWORD: ${RCLONE_CRYPT_PASSWORD:-}
-      RCLONE_CRYPT_PASSWORD2: ${RCLONE_CRYPT_PASSWORD2:-}
 
       # === Hermes ===
       HERMES_API_KEY: ${HERMES_API_KEY:-}

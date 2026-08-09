@@ -306,8 +306,11 @@ ENV ENABLE_LLAMA_CPP=${ENABLE_LLAMA_CPP}
 # Flowise 条件安装（仅在构建时 ENABLE_FLOWISE=1 时装，固定版本保证可复现）
 # npm 全局安装 → 二进制位于 npm 全局 bin（NodeSource 下为 /usr/bin/flowise）
 # 统一软链到 /opt/flowise/flowise 供 supervisord 以绝对路径引用
+# --fetch-retries：flowise 依赖树庞大（1800+ 文件），构建机偶发 ECONNRESET，
+# 加大重试次数避免瞬态网络错误导致整个构建失败
 RUN if [ "$ENABLE_FLOWISE" = "1" ]; then \
-      npm install -g flowise@2.2.8 && \
+      npm install -g flowise@2.2.8 \
+        --fetch-retries=5 --fetch-retry-mintimeout=20000 --fetch-retry-maxtimeout=120000 && \
       mkdir -p /opt/flowise && \
       ln -sf "$(command -v flowise)" /opt/flowise/flowise; \
     fi

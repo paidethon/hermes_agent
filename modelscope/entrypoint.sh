@@ -245,7 +245,8 @@ generate_vnc_password() {
 
 # ---------------------------------------------------------------------------
 # §4. rclone.conf 运行时生成
-# §9.5 低风险修复：开头校验所有必需 Secret
+# 2026-08-09 用户决定移除 crypt 加密层：备份直接写入 OneDrive 明文
+# （onedrive:zephyr-backup），不再需要 RCLONE_CRYPT_PASSWORD/PASSWORD2
 # ---------------------------------------------------------------------------
 generate_rclone_config() {
     log "Generating rclone.conf at runtime"
@@ -253,7 +254,7 @@ generate_rclone_config() {
     local rclone_conf="${PERSIST_ROOT}/config/rclone.conf"
     mkdir -p "$(dirname "$rclone_conf")"
 
-    # 分级校验（§9.5 低风险修复）
+    # 分级校验：
     # 第一级：ONEDRIVE_TOKEN 缺失 = 用户不需要备份，跳过
     if [ -z "${ONEDRIVE_TOKEN:-}" ]; then
         warn "ONEDRIVE_TOKEN not set, skipping rclone config generation"
@@ -261,12 +262,9 @@ generate_rclone_config() {
         return 0
     fi
 
-    # 第二级：ONEDRIVE_TOKEN 存在 = 用户要备份，其余 Secret 必须齐全
+    # 第二级：ONEDRIVE_TOKEN 存在 = 用户要备份，DRIVE_ID 必须齐全
     if [ -z "${ONEDRIVE_DRIVE_ID:-}" ]; then
         fail "ONEDRIVE_TOKEN set but ONEDRIVE_DRIVE_ID missing — cannot generate valid rclone config"
-    fi
-    if [ -z "${RCLONE_CRYPT_PASSWORD:-}" ] || [ -z "${RCLONE_CRYPT_PASSWORD2:-}" ]; then
-        fail "ONEDRIVE_TOKEN set but RCLONE_CRYPT_PASSWORD/RCLONE_CRYPT_PASSWORD2 missing — cannot generate valid crypt config"
     fi
 
     cat > "$rclone_conf" <<EOF
@@ -275,14 +273,6 @@ type = onedrive
 token = ${ONEDRIVE_TOKEN}
 drive_id = ${ONEDRIVE_DRIVE_ID}
 drive_type = personal
-
-[crypt]
-type = crypt
-remote = onedrive:zephyr-backup
-password = ${RCLONE_CRYPT_PASSWORD}
-password2 = ${RCLONE_CRYPT_PASSWORD2}
-directory_name_encryption = true
-filename_encryption = standard
 EOF
 
     chmod 600 "$rclone_conf"
