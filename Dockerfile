@@ -198,15 +198,19 @@ RUN git clone --branch ${HERMES_AGENT_VERSION} --depth 1 \
     chown -R hermes:hermes /opt/hermes-src
 
 # 安装 Hermes Agent 依赖
+# 注意：hermes-agent 的 pyproject.toml 禁止 wheel/sdist 构建（RuntimeError:
+# Building wheels or sdists for hermes-agent is not supported），
+# 必须用可编辑模式 -e 安装（官方 Dockerfile 同样如此）。
 # 末尾 command -v hermes 校验：console script 未生成则构建失败（快速失败）
 RUN cd /opt/hermes-src && \
     if [ -f requirements.txt ]; then \
         pip install --no-cache-dir -r requirements.txt; \
     fi && \
     if [ -f pyproject.toml ]; then \
-        uv pip install --system --no-cache .; \
+        uv pip install --system --no-cache -e .; \
     fi && \
-    # 拷贝到运行时目录
+    # 拷贝到运行时目录（可编辑安装后 .egg-link/.pth 指向 /opt/hermes-src，
+    # 所以先拷贝源码再删 src，保持 /opt/hermes 为最终路径）
     cp -a /opt/hermes-src/. /opt/hermes/ && \
     rm -rf /opt/hermes-src && \
     chown -R hermes:hermes /opt/hermes && \
