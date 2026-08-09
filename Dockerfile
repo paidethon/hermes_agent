@@ -221,7 +221,11 @@ COPY --from=studio-builder /opt/hermes-studio /opt/hermes-studio
 RUN chown -R hermes:hermes /opt/hermes-studio
 
 # ── 层 5: Open WebUI ────────────────────────────────────────────────────────
-RUN pip install --no-cache-dir open-webui==0.11.0
+# antlr4-python3-runtime 在 Python 3.11 + 新版 setuptools 下构建 wheel 会失败
+# （AttributeError: install_layout），需先升级 pip/setuptools 并强制使用预编译 wheel
+RUN pip install --no-cache-dir --upgrade pip setuptools wheel && \
+    pip install --no-cache-dir --only-binary=:all: antlr4-python3-runtime && \
+    pip install --no-cache-dir open-webui==0.11.0
 
 # ── 层 6: ModelScope SDK + 模型层（合并极客-AI模型通的 Dockerfile.model-layer）──
 # 修正：方案文档写的 Qwen/Qwen3-8B-GGUF 不存在，实际仓库是 unsloth/Qwen3-8B-GGUF
