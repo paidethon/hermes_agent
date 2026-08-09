@@ -178,7 +178,7 @@ check_perms() {
 }
 
 # ---------------------------------------------------------------------------
-# §2. Nginx Basic Auth — htpasswd 生成（bcrypt）
+# §2. Nginx Basic Auth — htpasswd 生成（SHA-512 crypt）
 # ---------------------------------------------------------------------------
 generate_htpasswd() {
     log "Generating Nginx Basic Auth (.htpasswd)"
@@ -187,11 +187,18 @@ generate_htpasswd() {
         fail "PORTAL_USER/PORTAL_PASSWORD not set, refusing to start"
     fi
 
-    # bcrypt (-B)，nginx 1.3.3+ 原生支持
-    htpasswd -bcB /etc/nginx/.htpasswd "$PORTAL_USER" "$PORTAL_PASSWORD" 2>/dev/null
+    # ⚠️ 坑（2026-08-09 实测）：nginx auth_basic 官方仅支持 crypt()/apr1/{SHA}
+    # 格式（https://nginx.org/en/docs/http/ngx_http_auth_basic_module.html），
+    # 不支持 bcrypt ($2y$)。原写法 htpasswd -bcB 生成 bcrypt → nginx 永远验证
+    # 失败 → 浏览器无限弹登录框。
+    # 改用 SHA-512 crypt（$6$）：glibc crypt() 原生支持，是 nginx 可用的最强格式。
+    local hash
+    hash=$(openssl passwd -6 "$PORTAL_PASSWORD") || \
+        fail "openssl passwd failed, cannot generate htpasswd"
+    printf '%s:%s\n' "$PORTAL_USER" "$hash" > /etc/nginx/.htpasswd
     chmod 600 /etc/nginx/.htpasswd
 
-    log "htpasswd generated for user '${PORTAL_USER}'"
+    log "htpasswd generated for user '${PORTAL_USER}' (SHA-512 crypt, nginx-compatible)"
 }
 
 # ---------------------------------------------------------------------------
