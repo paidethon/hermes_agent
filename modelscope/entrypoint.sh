@@ -1,4 +1,4 @@
-#!/bin/bash
+﻿#!/bin/bash
 # =============================================================================
 # Zephyr AI Desktop — ModelScope Entry Point
 # =============================================================================
@@ -178,7 +178,7 @@ check_perms() {
 }
 
 # ---------------------------------------------------------------------------
-# §2. Nginx Basic Auth — htpasswd 生成（SHA-512 crypt）
+# §2. Nginx Basic Auth — htpasswd 生成（MD5/apr1，nginx 100% 兼容）
 # ---------------------------------------------------------------------------
 generate_htpasswd() {
     log "Generating Nginx Basic Auth (.htpasswd)"
@@ -187,18 +187,16 @@ generate_htpasswd() {
         fail "PORTAL_USER/PORTAL_PASSWORD not set, refusing to start"
     fi
 
-    # ⚠️ 坑（2026-08-09 实测）：nginx auth_basic 官方仅支持 crypt()/apr1/{SHA}
-    # 格式（https://nginx.org/en/docs/http/ngx_http_auth_basic_module.html），
-    # 不支持 bcrypt ($2y$)。原写法 htpasswd -bcB 生成 bcrypt → nginx 永远验证
-    # 失败 → 浏览器无限弹登录框。
-    # 改用 SHA-512 crypt（$6$）：glibc crypt() 原生支持，是 nginx 可用的最强格式。
+    # 用 htpasswd 命令生成（apache2-utils 包，Dockerfile 层 1g 已装）
+    # -n: 不写文件，输出到 stdout
+    # -m: MD5/apr1 格式（nginx auth_basic 原生支持，兼容性最好）
+    # -b: 从命令行读密码
     local hash
-    hash=$(openssl passwd -6 "$PORTAL_PASSWORD") || \
-        fail "openssl passwd failed, cannot generate htpasswd"
-    printf '%s:%s\n' "$PORTAL_USER" "$hash" > /etc/nginx/.htpasswd
+    hash=$(htpasswd -nbm "$PORTAL_USER" "$PORTAL_PASSWORD" 2>/dev/null) ||         fail "htpasswd command failed, cannot generate htpasswd"
+    echo "$hash" > /etc/nginx/.htpasswd
     chmod 600 /etc/nginx/.htpasswd
 
-    log "htpasswd generated for user '${PORTAL_USER}' (SHA-512 crypt, nginx-compatible)"
+    log "htpasswd generated for user '${PORTAL_USER}' (MD5/apr1, nginx-compatible)"
 }
 
 # ---------------------------------------------------------------------------
