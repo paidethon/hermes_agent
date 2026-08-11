@@ -21,32 +21,31 @@
 # =============================================================================
 
 # ─────────────────────────────────────────────────────────────────────────────
-# Stage 1: llama.cpp 编译
+# Stage 1: llama.cpp 预编译 binary（替代源码编译，构建时间 -15~20 分钟）
 # ─────────────────────────────────────────────────────────────────────────────
 FROM ubuntu:24.04 AS llama-builder
 
 ENV DEBIAN_FRONTEND=noninteractive
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    git cmake build-essential wget ca-certificates && \
+    wget ca-certificates && \
     rm -rf /var/lib/apt/lists/*
 
-# 克隆并编译 llama.cpp（CPU 模式）
-RUN git clone --depth 1 https://github.com/ggerganov/llama.cpp.git /opt/llama.cpp && \
-    cd /opt/llama.cpp && \
-    git fetch --tags && \
-    git checkout $(git describe --tags $(git rev-list --tags --max-count=1)) && \
-    mkdir build && cd build && \
-    cmake .. \
-        -DLLAMA_BUILD_SERVER=ON \
-        -DLLAMA_BUILD_TESTS=OFF \
-        -DLLAMA_BUILD_EXAMPLES=OFF \
-        -DCMAKE_BUILD_TYPE=Release && \
-    cmake --build . --config Release -j$(nproc) && \
-    # 校验 binary 存在
-    ls -la bin/llama-server && \
-    # 清理 .o 文件减小体积
-    find . -name "*.o" -delete
+# 下载官方预编译 CPU binary（2026-08-11 经 gh api 核实存在：
+#   llama-b10359-bin-ubuntu-x64.tar.gz 16.5MB，包内为扁平结构，
+#   llama-server 是薄壳 ELF，依赖同目录 libllama-server-impl.so 等共享库）
+# 版本固定为 b10359 保证可复现
+ARG LLAMA_CPP_VERSION=b10359
+RUN wget -q "https://github.com/ggml-org/llama.cpp/releases/download/${LLAMA_CPP_VERSION}/llama-${LLAMA_CPP_VERSION}-bin-ubuntu-x64.tar.gz" \
+        -O /tmp/llama.tar.gz && \
+    mkdir -p /opt/llama.cpp && \
+    tar -xzf /tmp/llama.tar.gz -C /opt/llama.cpp --strip-components=1 && \
+    rm /tmp/llama.tar.gz && \
+    # 校验 binary 存在且是 ELF 可执行文件（薄壳 + 共享库）
+    ls -la /opt/llama.cpp/llama-server && \
+    file /opt/llama.cpp/llama-server | grep -q ELF && \
+    ls /opt/llama.cpp/libllama-server-impl.so && \
+    chmod +x /opt/llama.cpp/llama-server
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Stage 2: Hermes Studio 前端构建
@@ -80,7 +79,8 @@ RUN git clone --branch ${HERMES_STUDIO_VERSION} --depth 1 \
 #   官方序列：--ignore-scripts 跳过 postinstall → 单独重建 node-pty 原生模块
 #   → build → prune 掉 devDeps（运行时只需要 prod 依赖 + dist）
 WORKDIR /opt/hermes-studio
-RUN npm ci --ignore-scripts && \
+# --fetch-retries=5：构建机偶发网络瞬断（ECONNRESET），加大重试避免整次构建失败
+RUN npm ci --ignore-scripts --fetch-retries=5 --fetch-retry-mintimeout=20000 --fetch-retry-maxtimeout=120000 && \
     npm rebuild node-pty && \
     npm run build && \
     npm prune --omit=dev && \
@@ -230,15 +230,16 @@ RUN chown -R hermes:hermes /opt/hermes-studio
 # 坑2：antlr4-python3-runtime 是 sdist-only 包，--only-binary=:all: 会直接
 #      "no matching distribution" 失败，所以 open-webui 不加该约束；
 #      新装的 setuptools+wheel 已修复其源码构建的 install_layout 报错。
+# --retries 5：构建机偶发网络瞬断（ECONNRESET），加大重试避免整次构建失败
 RUN pip install --no-cache-dir --ignore-installed pip setuptools wheel && \
-    pip install --no-cache-dir open-webui==0.11.0
+    pip install --no-cache-dir --retries 5 --timeout 60 open-webui==0.11.0
 
 # ── 层 6: ModelScope SDK + 模型层（合并极客-AI模型通的 Dockerfile.model-layer）──
 # 修正：方案文档写的 Qwen/Qwen3-8B-GGUF 不存在，实际仓库是 unsloth/Qwen3-8B-GGUF
 #       文件名是 Qwen3-8B-Q4_K_M.gguf（大写 Q）
 # 固定版本避免依赖漂移；不加 --only-binary 约束（个别依赖可能需源码构建，
 # 层 5 已装好新版 setuptools+wheel，构建优先于预编译偏好）
-RUN pip install --no-cache-dir "modelscope==1.39.1"
+RUN pip install --no-cache-dir --retries 5 --timeout 60 "modelscope==1.39.1"
 
 ENV MODELSCOPE_CACHE=/mnt/workspace/zephyr/models
 ENV LLAMA_CPP_MODEL_PATH=/mnt/workspace/zephyr/models/unsloth/Qwen3-8B-GGUF/Qwen3-8B-Q4_K_M.gguf
@@ -272,11 +273,13 @@ COPY modelscope/config/llama-cpp.env /opt/zephyr/config/llama-cpp.env
 COPY modelscope/config/open-webui-models.env /opt/zephyr/config/open-webui-models.env
 RUN chmod +x /opt/zephyr/scripts/model-download.sh /opt/zephyr/scripts/modelscope-api-test.py
 
-# ── 层 6.5: llama.cpp（从 Stage 1 拷贝编译产物）────────────────────────────
+# ── 层 6.5: llama.cpp（从 Stage 1 拷贝预编译产物）──────────────────────────
 # supervisord.conf 中 command=/opt/llama.cpp/llama-server
-COPY --from=llama-builder /opt/llama.cpp/build/bin/ /opt/llama.cpp/bin/
-RUN ln -sf /opt/llama.cpp/bin/llama-server /opt/llama.cpp/llama-server && \
-    chmod +x /opt/llama.cpp/bin/llama-server
+# 2026-08-11 起改为预编译 binary：包内扁平结构（薄壳 + 共享库），
+# 必须整目录拷贝，llama-server 依赖同目录 libllama-server-impl.so 等
+COPY --from=llama-builder /opt/llama.cpp/ /opt/llama.cpp/
+RUN chmod +x /opt/llama.cpp/llama-server && \
+    ls -la /opt/llama.cpp/llama-server
 
 # ── 层 7: Nginx + Supervisord 配置 ──────────────────────────────────────────
 
