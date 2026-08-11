@@ -28,7 +28,7 @@ FROM ubuntu:24.04 AS llama-builder
 ENV DEBIAN_FRONTEND=noninteractive
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    wget ca-certificates && \
+    wget ca-certificates file && \
     rm -rf /var/lib/apt/lists/*
 
 # 下载官方预编译 CPU binary（2026-08-11 经 gh api 核实存在：
