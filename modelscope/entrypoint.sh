@@ -187,20 +187,41 @@ generate_htpasswd() {
         fail "PORTAL_USER/PORTAL_PASSWORD not set, refusing to start"
     fi
 
-    # 用 htpasswd 命令生成（apache2-utils 包，Dockerfile 层 1g 已装）
-    # -n: 不写文件，输出到 stdout
-    # -m: MD5/apr1 格式（nginx auth_basic 原生支持，兼容性最好）
-    # -b: 从命令行读密码
-    local hash
-    hash=$(htpasswd -nbm "$PORTAL_USER" "$PORTAL_PASSWORD" 2>/dev/null) ||         fail "htpasswd command failed, cannot generate htpasswd"
-    echo "$hash" > /etc/nginx/.htpasswd
-    # 关键：nginx worker 运行在 www-data 用户下（nginx.conf 第 9 行 user www-data），
-    # htpasswd 必须让 www-data 可读，否则 nginx 无法读取 → 永远 401。
-    # 600 + owner=www-data：只有 www-data 能读，最安全。
-    chown www-data:www-data /etc/nginx/.htpasswd
-    chmod 600 /etc/nginx/.htpasswd
+    # 诊断：记录用户名和密码长度（不记录密码本身）
+    log "PORTAL_USER='${PORTAL_USER}', PORTAL_PASSWORD length=${#PORTAL_PASSWORD}"
 
-    log "htpasswd generated for user '${PORTAL_USER}' (MD5/apr1, owner=www-data)"
+    # 用 htpasswd 命令生成 MD5/apr1 哈希（nginx auth_basic 原生支持）
+    local hash
+    hash=$(htpasswd -nbm "$PORTAL_USER" "$PORTAL_PASSWORD" 2>&1)
+    local rc=$?
+    log "htpasswd exit=$rc, output_len=${#hash}"
+
+    # htpasswd 失败或输出异常时，回退到 openssl apr1（同样 nginx 支持）
+    if [ $rc -ne 0 ] || [ -z "$hash" ] || ! echo "$hash" | grep -q "^${PORTAL_USER}:"; then
+        warn "htpasswd output invalid, falling back to openssl apr1"
+        local salt
+        salt=$(head -c 8 /dev/urandom | od -An -tx1 | tr -d ' \n' | cut -c1-8)
+        hash="${PORTAL_USER}:$(openssl passwd -apr1 -salt "$salt" "$PORTAL_PASSWORD")"
+    fi
+
+    echo "$hash" > /etc/nginx/.htpasswd
+
+    # 关键：nginx worker 运行在 www-data 用户下（nginx.conf user www-data），
+    # auth_basic 在 worker 进程读取 htpasswd 验证凭据，文件必须让 www-data 可读。
+    # 用 root:www-data + 640：root 拥有、www-data 组可读（比 600+www-data 更稳妥）
+    chown root:www-data /etc/nginx/.htpasswd
+    chmod 640 /etc/nginx/.htpasswd
+
+    # 诊断：验证文件内容、权限、www-data 可读性
+    log "htpasswd file: $(ls -la /etc/nginx/.htpasswd)"
+    log "htpasswd content prefix: $(head -c 25 /etc/nginx/.htpasswd)"
+    if runuser -u www-data -- cat /etc/nginx/.htpasswd > /dev/null 2>&1; then
+        log "www-data CAN read htpasswd OK"
+    else
+        log "WARNING: www-data CANNOT read htpasswd!"
+    fi
+
+    log "htpasswd generated for user '${PORTAL_USER}' (MD5/apr1)"
 }
 
 # ---------------------------------------------------------------------------
@@ -293,7 +314,7 @@ EOF
 final_permission_check() {
     log "Running final permission checks"
 
-    check_perms /etc/nginx/.htpasswd          600
+    check_perms /etc/nginx/.htpasswd          640
     check_perms /root/.vnc/passwd             600
     check_perms "${PERSIST_ROOT}/config/rclone.conf" 600
 
