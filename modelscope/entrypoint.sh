@@ -194,9 +194,13 @@ generate_htpasswd() {
     local hash
     hash=$(htpasswd -nbm "$PORTAL_USER" "$PORTAL_PASSWORD" 2>/dev/null) ||         fail "htpasswd command failed, cannot generate htpasswd"
     echo "$hash" > /etc/nginx/.htpasswd
+    # 关键：nginx worker 运行在 www-data 用户下（nginx.conf 第 9 行 user www-data），
+    # htpasswd 必须让 www-data 可读，否则 nginx 无法读取 → 永远 401。
+    # 600 + owner=www-data：只有 www-data 能读，最安全。
+    chown www-data:www-data /etc/nginx/.htpasswd
     chmod 600 /etc/nginx/.htpasswd
 
-    log "htpasswd generated for user '${PORTAL_USER}' (MD5/apr1, nginx-compatible)"
+    log "htpasswd generated for user '${PORTAL_USER}' (MD5/apr1, owner=www-data)"
 }
 
 # ---------------------------------------------------------------------------
