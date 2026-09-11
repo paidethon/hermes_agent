@@ -1,0 +1,30 @@
+test_authentication_configuration (test_recovery.ConfigurationTests.test_authentication_configuration) ... ok
+test_first_boot_without_password_fails_closed (test_recovery.ConfigurationTests.test_first_boot_without_password_fails_closed) ... ok
+test_install_uses_final_path (test_recovery.ConfigurationTests.test_install_uses_final_path) ... ok
+test_managed_file_symlink_is_not_overwritten (test_recovery.ConfigurationTests.test_managed_file_symlink_is_not_overwritten) ... ok
+test_no_public_studio_reverse_proxy (test_recovery.ConfigurationTests.test_no_public_studio_reverse_proxy) ... ok
+test_nonstandard_https_port (test_recovery.ConfigurationTests.test_nonstandard_https_port) ... ok
+test_origin_injection_and_insecure_values (test_recovery.ConfigurationTests.test_origin_injection_and_insecure_values) ... ok
+test_origin_normalization (test_recovery.ConfigurationTests.test_origin_normalization) ... ok
+test_password_is_hashed_and_initialization_is_idempotent (test_recovery.ConfigurationTests.test_password_is_hashed_and_initialization_is_idempotent) ... ok
+test_root_guards (test_recovery.ConfigurationTests.test_root_guards) ... ok
+test_shell_syntax (test_recovery.ConfigurationTests.test_shell_syntax) ... ok
+test_short_password_rejected (test_recovery.ConfigurationTests.test_short_password_rejected) ... ok
+test_supervisor_no_legacy_or_public_studio (test_recovery.ConfigurationTests.test_supervisor_no_legacy_or_public_studio) ... ok
+test_anonymous_protected_routes_redirect_without_basic_auth (test_recovery.NginxIntegrationTests.test_anonymous_protected_routes_redirect_without_basic_auth) ... ok
+test_anonymous_websocket_not_upgraded (test_recovery.NginxIntegrationTests.test_anonymous_websocket_not_upgraded) ... ok
+test_auth_failure_is_fail_closed (test_recovery.NginxIntegrationTests.test_auth_failure_is_fail_closed) ... ok
+test_authenticated_websocket_upgrade (test_recovery.NginxIntegrationTests.test_authenticated_websocket_upgrade) ... ok
+test_cross_origin_websocket_rejected (test_recovery.NginxIntegrationTests.test_cross_origin_websocket_rejected) ... ok
+test_invalid_cookie_denied (test_recovery.NginxIntegrationTests.test_invalid_cookie_denied) ... ok
+test_legacy_app_routes_not_accidentally_exposed (test_recovery.NginxIntegrationTests.test_legacy_app_routes_not_accidentally_exposed) ... ok
+test_liveness_does_not_require_login (test_recovery.NginxIntegrationTests.test_liveness_does_not_require_login) ... ok
+test_no_public_internal_authorization_endpoint (test_recovery.NginxIntegrationTests.test_no_public_internal_authorization_endpoint) ... ok
+test_spoofed_host_and_authorization_not_forwarded (test_recovery.NginxIntegrationTests.test_spoofed_host_and_authorization_not_forwarded) ... ok
+test_unready_is_not_healthy (test_recovery.NginxIntegrationTests.test_unready_is_not_healthy) ... ok
+test_valid_cookie_allows_portal_and_assets (test_recovery.NginxIntegrationTests.test_valid_cookie_allows_portal_and_assets) ... ok
+
+----------------------------------------------------------------------
+Ran 25 tests in 0.712s
+
+OK

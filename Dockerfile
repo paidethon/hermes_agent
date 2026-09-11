@@ -1,368 +1,81 @@
-# =============================================================================
-# Zephyr AI Desktop — Multi-Stage Dockerfile
-# =============================================================================
-# 方案 B（均衡完整版）
-# 基础镜像：ubuntu:24.04
-# 预估镜像体积：~1.8 GB（不含 GGUF 模型）
-#
-# 多阶段构建：
-#   Stage 1: llama.cpp 编译（仅保留 binary）
-#   Stage 2: Hermes Studio 前端构建（仅保留 dist）
-#   Stage 3: 最终运行镜像
-#
-# 安全构建原则（§7）：
-#   - --no-install-recommends
-#   - 构建末尾 apt upgrade
-#   - binary checksum 校验
-#   - 非 root 用户（hermes）
-#   - 镜像层零密钥
-#
-# 维护者：海豚-容器工程师
-# =============================================================================
-
-# ─────────────────────────────────────────────────────────────────────────────
-# Stage 1: llama.cpp 预编译 binary（替代源码编译，构建时间 -15~20 分钟）
-# ─────────────────────────────────────────────────────────────────────────────
-FROM ubuntu:24.04 AS llama-builder
-
-ENV DEBIAN_FRONTEND=noninteractive
-
-RUN apt-get update && apt-get install -y --no-install-recommends \
-    wget ca-certificates file && \
-    rm -rf /var/lib/apt/lists/*
-
-# 下载官方预编译 CPU binary（2026-08-11 经 gh api 核实存在：
-#   llama-b10359-bin-ubuntu-x64.tar.gz 16.5MB，包内为扁平结构，
-#   llama-server 是薄壳 ELF，依赖同目录 libllama-server-impl.so 等共享库）
-# 版本固定为 b10359 保证可复现
-ARG LLAMA_CPP_VERSION=b10359
-RUN wget -q "https://github.com/ggml-org/llama.cpp/releases/download/${LLAMA_CPP_VERSION}/llama-${LLAMA_CPP_VERSION}-bin-ubuntu-x64.tar.gz" \
-        -O /tmp/llama.tar.gz && \
-    mkdir -p /opt/llama.cpp && \
-    tar -xzf /tmp/llama.tar.gz -C /opt/llama.cpp --strip-components=1 && \
-    rm /tmp/llama.tar.gz && \
-    # 校验 binary 存在且是 ELF 可执行文件（薄壳 + 共享库）
-    ls -la /opt/llama.cpp/llama-server && \
-    file /opt/llama.cpp/llama-server | grep -q ELF && \
-    ls /opt/llama.cpp/libllama-server-impl.so && \
-    chmod +x /opt/llama.cpp/llama-server
-
-# ─────────────────────────────────────────────────────────────────────────────
-# Stage 2: Hermes Studio 前端构建
-# ─────────────────────────────────────────────────────────────────────────────
-FROM ubuntu:24.04 AS studio-builder
-
-ENV DEBIAN_FRONTEND=noninteractive
-
-# node-pty 原生模块编译需要 python3/make/g++（BUG-9 修复配套）
-RUN apt-get update && apt-get install -y --no-install-recommends \
-    git ca-certificates curl python3 make g++ && \
-    rm -rf /var/lib/apt/lists/*
-
-# Node.js 24（BUG-9 修复：hermes-studio engines 要求 node>=23，
-# 官方 Dockerfile 使用 Node 24.15.0；setup_24.x 存在性已核实）
-RUN curl -fsSL https://deb.nodesource.com/setup_24.x | bash - && \
-    apt-get install -y --no-install-recommends nodejs && \
-    rm -rf /var/lib/apt/lists/*
-
-# 克隆并构建 Hermes Studio
-# v0.6.39 tag 存在性已核实；移除静默回退，克隆失败即构建失败（同 A7 修复原则）
-ARG HERMES_STUDIO_REPO=https://github.com/EKKOLearnAI/hermes-studio.git
-ARG HERMES_STUDIO_VERSION=v0.6.39
-RUN git clone --branch ${HERMES_STUDIO_VERSION} --depth 1 \
-      ${HERMES_STUDIO_REPO} /opt/hermes-studio
-
-# BUG-8/BUG-9 修复：构建序列对齐官方 Dockerfile
-#   原写法 `npm ci --omit=dev || npm install && npm run build` 有两个 bug：
-#   ① shell 优先级 A||(B&&C&&D)：npm ci 成功时 build 根本不会执行，dist/ 不存在
-#   ② --omit=dev 跳过 devDependencies，而 vite/typescript 等构建工具都在 devDeps
-#   官方序列：--ignore-scripts 跳过 postinstall → 单独重建 node-pty 原生模块
-#   → build → prune 掉 devDeps（运行时只需要 prod 依赖 + dist）
+# syntax=docker/dockerfile:1
+# Recovery profile: KDE + Hermes + local-only Studio + cookie-authenticated noVNC.
+# Build on GitHub Actions, then deploy the resulting image by digest to ModelScope.
+FROM node:24-bookworm-slim AS studio-build
+ARG STUDIO_REF=v0.6.39
+RUN apt-get update && apt-get install -y --no-install-recommends git ca-certificates python3 make g++ \
+    && rm -rf /var/lib/apt/lists/*
+RUN git clone --depth 1 --branch "$STUDIO_REF" https://github.com/EKKOLearnAI/hermes-studio.git /opt/hermes-studio
 WORKDIR /opt/hermes-studio
-# --fetch-retries=5：构建机偶发网络瞬断（ECONNRESET），加大重试避免整次构建失败
-RUN npm ci --ignore-scripts --fetch-retries=5 --fetch-retry-mintimeout=20000 --fetch-retry-maxtimeout=120000 && \
-    npm rebuild node-pty && \
-    npm run build && \
-    npm prune --omit=dev && \
-    npm cache clean --force && \
-    # 校验生产入口存在（dist/server/index.js 是 Koa 服务器入口）
-    ls dist/server/index.js
+RUN npm ci --ignore-scripts --fetch-retries=5 \
+    && npm rebuild node-pty \
+    && npm run build \
+    && npm prune --omit=dev --ignore-scripts \
+    && test -f dist/server/index.js \
+    && git rev-parse HEAD > /opt/studio-source-commit.txt
 
-# ─────────────────────────────────────────────────────────────────────────────
-# Stage 3: 最终运行镜像
-# ─────────────────────────────────────────────────────────────────────────────
-FROM ubuntu:24.04 AS final
-
-ENV DEBIAN_FRONTEND=noninteractive
-ENV TZ=Asia/Shanghai
-ENV LANG=C.UTF-8
-ENV LC_ALL=C.UTF-8
-
-# ── 层 1: 系统基础 — KDE Plasma + TigerVNC + noVNC + Chrome + fcitx5 ────────
-# 分步安装以利用层缓存，大依赖单独一层
-
-# 1a: 基础工具 + KDE Plasma 桌面
+FROM ubuntu:24.04
+SHELL ["/bin/bash", "-o", "pipefail", "-c"]
+ENV DEBIAN_FRONTEND=noninteractive TZ=Asia/Shanghai LANG=C.UTF-8 LC_ALL=C.UTF-8
+# Do not replace Ubuntu's system Python or install agent dependencies into it.
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    curl wget git jq ripgrep rsync zstd tar gzip unzip \
-    ca-certificates gnupg lsb-release software-properties-common \
-    locales tzdata && \
-    locale-gen en_US.UTF-8 zh_CN.UTF-8 && \
-    rm -rf /var/lib/apt/lists/*
-
-# 1b: KDE Plasma（最小安装，不含多余应用）
-RUN apt-get update && apt-get install -y --no-install-recommends \
-    kde-plasma-desktop \
-    konsole dolphin ark kate && \
-    rm -rf /var/lib/apt/lists/*
-
-# 1c: TigerVNC + noVNC 依赖
-# tigervnc-tools 提供 tigervncpasswd（Ubuntu 24.04 起 vncpasswd 更名为
-# tigervncpasswd 且拆到独立包，不装会导致 entrypoint 报 command not found）
-RUN apt-get update && apt-get install -y --no-install-recommends \
-    tigervnc-standalone-server tigervnc-common tigervnc-tools \
-    xterm dbus-x11 x11-utils x11-xserver-utils && \
-    rm -rf /var/lib/apt/lists/*
-
-# 1d: Chrome（Google 官方源）
+    ca-certificates curl git gnupg tini nginx supervisor gosu procps \
+    python3 python3-venv python3-yaml python3-argon2 build-essential \
+    kde-plasma-desktop konsole dolphin kate dbus-x11 dbus-daemon \
+    tigervnc-standalone-server tigervnc-tools novnc python3-websockify \
+    xauth x11-utils x11-xserver-utils xterm fonts-noto-cjk \
+    fcitx5 fcitx5-chinese-addons fcitx5-frontend-qt5 fcitx5-frontend-gtk3 \
+    jq rsync unzip ffmpeg rclone \
+    && rm -rf /var/lib/apt/lists/*
+# Chrome's signed repository. The browser runs as hermes, not root.
 RUN curl -fsSL https://dl.google.com/linux/linux_signing_key.pub \
-        | gpg --dearmor -o /usr/share/keyrings/google-chrome.gpg && \
-    echo "deb [arch=amd64 signed-by=/usr/share/keyrings/google-chrome.gpg] \
-        http://dl.google.com/linux/chrome/deb/ stable main" \
-        > /etc/apt/sources.list.d/google-chrome.list && \
-    apt-get update && \
-    apt-get install -y --no-install-recommends google-chrome-stable && \
-    rm -rf /var/lib/apt/lists/*
+      | gpg --dearmor -o /usr/share/keyrings/google-chrome.gpg \
+    && echo 'deb [arch=amd64 signed-by=/usr/share/keyrings/google-chrome.gpg] https://dl.google.com/linux/chrome/deb/ stable main' \
+      > /etc/apt/sources.list.d/google-chrome.list \
+    && apt-get update && apt-get install -y --no-install-recommends google-chrome-stable \
+    && rm -rf /var/lib/apt/lists/*
+COPY --from=studio-build /usr/local/ /usr/local/
+COPY --from=studio-build /opt/hermes-studio/ /opt/hermes-studio/
+COPY --from=studio-build /opt/studio-source-commit.txt /opt/versions/studio.txt
 
-# 1e: noVNC 1.7.0（GitHub release，checksum 校验）
-ARG NOVNC_VERSION=1.7.0
-ARG NOVNC_SHA256=b1003a11b6e6e8d8f7f5e5586daae7f8ca651d8aee0aa155ff9ac841c48f52c6
-RUN curl -fsSL "https://github.com/novnc/noVNC/archive/refs/tags/v${NOVNC_VERSION}.tar.gz" \
-        -o /tmp/novnc.tar.gz && \
-    echo "${NOVNC_SHA256}  /tmp/novnc.tar.gz" | sha256sum -c - && \
-    mkdir -p /opt/novnc && \
-    tar -xzf /tmp/novnc.tar.gz -C /opt/novnc --strip-components=1 && \
-    rm /tmp/novnc.tar.gz
+# Official Linux glibc release; checksum from the v4.39.25 release asset.
+ARG AUTHELIA_VERSION=4.39.25
+ARG AUTHELIA_SHA256=7be84c9807186487aa7e579ba76f1674e33119e52d77a1f256165d0f346aac49
+RUN curl -fSL --retry 5 \
+      "https://github.com/authelia/authelia/releases/download/v${AUTHELIA_VERSION}/authelia-v${AUTHELIA_VERSION}-linux-amd64.tar.gz" \
+      -o /tmp/authelia.tar.gz \
+    && echo "${AUTHELIA_SHA256}  /tmp/authelia.tar.gz" | sha256sum -c - \
+    && mkdir /tmp/authelia-extract \
+    && tar -xzf /tmp/authelia.tar.gz -C /tmp/authelia-extract \
+    && install -m 0755 "$(find /tmp/authelia-extract -type f -name authelia -print -quit)" /usr/local/bin/authelia \
+    && authelia --version \
+    && rm -rf /tmp/authelia*
 
-# 1f: fcitx5 中文输入法
-RUN apt-get update && apt-get install -y --no-install-recommends \
-    fcitx5 fcitx5-chinese-addons fcitx5-frontend-qt5 fcitx5-frontend-gtk3 && \
-    rm -rf /var/lib/apt/lists/*
-
-# 1g: Nginx + Supervisord + 系统工具
-RUN apt-get update && apt-get install -y --no-install-recommends \
-    nginx supervisor \
-    apache2-utils \
-    rclone \
-    ffmpeg \
-    gosu && \
-    rm -rf /var/lib/apt/lists/*
-
-# ── 层 2: 运行时 — Python 3.11 + Node.js 22 + uv ───────────────────────────
-
-# 2a: Python 3.11（deadsnakes PPA）
-RUN add-apt-repository ppa:deadsnakes/ppa && \
-    apt-get update && apt-get install -y --no-install-recommends \
-    python3.11 python3.11-venv python3.11-dev \
-    python3-pip python3-setuptools python3-wheel && \
-    update-alternatives --install /usr/bin/python3 python3 /usr/bin/python3.11 1 && \
-    ln -sf /usr/bin/python3.11 /usr/local/bin/python && \
-    rm -rf /var/lib/apt/lists/*
-
-# 2b: Node.js 24（NodeSource）
-# BUG-9 修复：hermes-studio 生产服务器（node dist/server/index.js）要求 node>=23，
-# 与 studio-builder 构建阶段保持同一主版本，避免 ABI/语法不兼容
-RUN curl -fsSL https://deb.nodesource.com/setup_24.x | bash - && \
-    apt-get install -y --no-install-recommends nodejs && \
-    npm install -g npm@latest && \
-    rm -rf /var/lib/apt/lists/*
-
-# 2c: uv（Python 包管理加速器）
-RUN curl -fsSL https://astral.sh/uv/install.sh | sh && \
-    mv /root/.local/bin/uv /usr/local/bin/uv && \
-    mv /root/.local/bin/uvx /usr/local/bin/uvx
-
-# ── 层 3: Hermes Agent（非 root 用户 hermes）────────────────────────────────
-
-# 创建 hermes 用户（解决 Gateway root 崩溃问题）
-RUN useradd -m -s /bin/bash hermes && \
-    mkdir -p /opt/hermes && \
-    chown hermes:hermes /opt/hermes
-
-# 克隆 Hermes Agent
-# A7 修复（2026-08-09 经 GitHub API 核实）：
-#   原占位符 NousResearch/hermes.git 不存在（404）；
-#   真实仓库是 NousResearch/hermes-agent，tag 为日期格式（v2026.x.x），v0.18.2 不存在。
-#   已移除静默回退：tag 克隆失败即构建失败，保证构建产物版本可控。
-ARG HERMES_AGENT_REPO=https://github.com/NousResearch/hermes-agent.git
-ARG HERMES_AGENT_VERSION=v2026.8.3
-RUN git clone --branch ${HERMES_AGENT_VERSION} --depth 1 \
-      ${HERMES_AGENT_REPO} /opt/hermes-src && \
-    chown -R hermes:hermes /opt/hermes-src
-
-# 安装 Hermes Agent 依赖
-# 注意：hermes-agent 的 pyproject.toml 禁止 wheel/sdist 构建（RuntimeError:
-# Building wheels or sdists for hermes-agent is not supported），
-# 必须用可编辑模式 -e 安装（官方 Dockerfile 同样如此）。
-# requirements.txt 依赖全部强制使用预编译 wheel（--only-binary=:all:）
-# 末尾 command -v hermes 校验：console script 未生成则构建失败（快速失败）
-RUN cd /opt/hermes-src && \
-    if [ -f requirements.txt ]; then \
-        pip install --no-cache-dir --only-binary=:all: -r requirements.txt; \
-    fi && \
-    if [ -f pyproject.toml ]; then \
-        uv pip install --system --no-cache -e .; \
-    fi && \
-    # 拷贝到运行时目录（可编辑安装后 .egg-link/.pth 指向 /opt/hermes-src，
-    # 所以先拷贝源码再删 src，保持 /opt/hermes 为最终路径）
-    cp -a /opt/hermes-src/. /opt/hermes/ && \
-    rm -rf /opt/hermes-src && \
-    chown -R hermes:hermes /opt/hermes && \
-    command -v hermes
-
-# ── 层 4: Hermes Studio（从 Stage 2 拷贝构建产物）──────────────────────────
-COPY --from=studio-builder /opt/hermes-studio /opt/hermes-studio
-RUN chown -R hermes:hermes /opt/hermes-studio
-
-# ── 层 5: Open WebUI ────────────────────────────────────────────────────────
-# 坑1：系统 wheel 0.42.0 是 apt 装的 Debian 包（无 pip RECORD 元数据），
-#      pip --upgrade 会先卸载它 → "Cannot uninstall wheel, RECORD file not found"。
-#      用 --ignore-installed 绕过卸载，全新安装工具链。
-# 坑2：antlr4-python3-runtime 是 sdist-only 包，--only-binary=:all: 会直接
-#      "no matching distribution" 失败，所以 open-webui 不加该约束；
-#      新装的 setuptools+wheel 已修复其源码构建的 install_layout 报错。
-# --retries 5：构建机偶发网络瞬断（ECONNRESET），加大重试避免整次构建失败
-RUN pip install --no-cache-dir --ignore-installed pip setuptools wheel && \
-    pip install --no-cache-dir --retries 5 --timeout 60 open-webui==0.11.0
-
-# ── 层 6: ModelScope SDK + 模型层（合并极客-AI模型通的 Dockerfile.model-layer）──
-# 修正：方案文档写的 Qwen/Qwen3-8B-GGUF 不存在，实际仓库是 unsloth/Qwen3-8B-GGUF
-#       文件名是 Qwen3-8B-Q4_K_M.gguf（大写 Q）
-# 固定版本避免依赖漂移；不加 --only-binary 约束（个别依赖可能需源码构建，
-# 层 5 已装好新版 setuptools+wheel，构建优先于预编译偏好）
-RUN pip install --no-cache-dir --retries 5 --timeout 60 "modelscope==1.39.1"
-
-ENV MODELSCOPE_CACHE=/mnt/workspace/zephyr/models
-ENV LLAMA_CPP_MODEL_PATH=/mnt/workspace/zephyr/models/unsloth/Qwen3-8B-GGUF/Qwen3-8B-Q4_K_M.gguf
-
-# 模型预下载（默认关闭，运行时由 first-run-init.sh 下载）
-# 设为 1 可在构建时预下载（镜像体积 +5GB）
-ARG PRELOAD_QWEN3_8B=0
-RUN if [ "$PRELOAD_QWEN3_8B" = "1" ]; then \
-      mkdir -p /opt/models && \
-      MODELSCOPE_CACHE=/opt/models modelscope download \
-        --model unsloth/Qwen3-8B-GGUF \
-        --include "Qwen3-8B-Q4_K_M.gguf" \
-        --local_dir /opt/models/unsloth/Qwen3-8B-GGUF && \
-      echo "Model preloaded to /opt/models/unsloth/Qwen3-8B-GGUF/"; \
-    fi
-
-# 可选：预下载 Qwen3-1.7B-Q4_K_M（轻量备用模型，~1.1 GB）
-ARG PRELOAD_QWEN3_1_7B=0
-RUN if [ "$PRELOAD_QWEN3_1_7B" = "1" ]; then \
-      mkdir -p /opt/models && \
-      MODELSCOPE_CACHE=/opt/models modelscope download \
-        --model unsloth/Qwen3-1.7B-GGUF \
-        --include "Qwen3-1.7B-Q4_K_M.gguf" \
-        --local_dir /opt/models/unsloth/Qwen3-1.7B-GGUF; \
-    fi
-
-# COPY 模型层脚本和配置（极客-AI模型通 提供）
-COPY modelscope/scripts/model-download.sh /opt/zephyr/scripts/model-download.sh
-COPY modelscope/scripts/modelscope-api-test.py /opt/zephyr/scripts/modelscope-api-test.py
-COPY modelscope/config/llama-cpp.env /opt/zephyr/config/llama-cpp.env
-COPY modelscope/config/open-webui-models.env /opt/zephyr/config/open-webui-models.env
-RUN chmod +x /opt/zephyr/scripts/model-download.sh /opt/zephyr/scripts/modelscope-api-test.py
-
-# ── 层 6.5: llama.cpp（从 Stage 1 拷贝预编译产物）──────────────────────────
-# supervisord.conf 中 command=/opt/llama.cpp/llama-server
-# 2026-08-11 起改为预编译 binary：包内扁平结构（薄壳 + 共享库），
-# 必须整目录拷贝，llama-server 依赖同目录 libllama-server-impl.so 等
-COPY --from=llama-builder /opt/llama.cpp/ /opt/llama.cpp/
-RUN chmod +x /opt/llama.cpp/llama-server && \
-    ls -la /opt/llama.cpp/llama-server
-
-# ── 层 7: Nginx + Supervisord 配置 ──────────────────────────────────────────
-
-# 拷贝行者提供的配置文件
-COPY modelscope/nginx/nginx.conf /etc/nginx/nginx.conf
-COPY modelscope/nginx/portal.conf /etc/nginx/conf.d/portal.conf
-COPY modelscope/supervisord.conf /etc/supervisor/conf.d/supervisord.conf
-
-# 确保 Nginx 日志目录存在
-RUN mkdir -p /var/log/nginx /var/log/supervisor /run/nginx
-
-# ── 层 8: 入口脚本 + 工具脚本 ───────────────────────────────────────────────
-COPY modelscope/entrypoint.sh /opt/entrypoint.sh
-COPY scripts/ /opt/scripts/
-RUN chmod +x /opt/entrypoint.sh /opt/scripts/*.sh
-
-# ── 层 9: 可选模块开关 ──────────────────────────────────────────────────────
-# Flowise 默认启用（用户已确认 ENABLE_FLOWISE=1）
-ARG ENABLE_FLOWISE=1
-ARG ENABLE_ANYTHINGLLM=0
-ARG ENABLE_LLAMA_CPP=1
-
-ENV ENABLE_FLOWISE=${ENABLE_FLOWISE}
-ENV ENABLE_ANYTHINGLLM=${ENABLE_ANYTHINGLLM}
-ENV ENABLE_LLAMA_CPP=${ENABLE_LLAMA_CPP}
-
-# Flowise 条件安装（仅在构建时 ENABLE_FLOWISE=1 时装，固定版本保证可复现）
-# npm 全局安装 → 二进制位于 npm 全局 bin（NodeSource 下为 /usr/bin/flowise）
-# 统一软链到 /opt/flowise/flowise 供 supervisord 以绝对路径引用
-# --fetch-retries：flowise 依赖树庞大（1800+ 文件），构建机偶发 ECONNRESET，
-# 加大重试次数避免瞬态网络错误导致整个构建失败
-RUN if [ "$ENABLE_FLOWISE" = "1" ]; then \
-      npm install -g flowise@2.2.8 \
-        --fetch-retries=5 --fetch-retry-mintimeout=20000 --fetch-retry-maxtimeout=120000 && \
-      mkdir -p /opt/flowise && \
-      ln -sf "$(command -v flowise)" /opt/flowise/flowise; \
-    fi
-
-# 模型相关环境变量（supervisord.conf %(ENV_*)s 引用，必须定义否则启动失败）
-ENV LLAMA_CPP_THREADS=1
-ENV LLAMA_CPP_CTX_SIZE=8192
-ENV LLAMA_CPP_BATCH_SIZE=512
-ENV LLAMA_CPP_NGPU_LAYERS=0
-ENV LLAMA_CPP_MODEL_ALIAS=qwen3-8b-local
-ENV LLAMA_CPP_API_KEY=sk-zephyr-local-internal
-ENV OPENWEBUI_DEFAULT_MODEL=qwen3-8b-local
-
-# Hermes Gateway API 密钥（supervisord.conf %(ENV_HERMES_API_KEY)s 引用，
-# 映射为 gateway 真实的 API_SERVER_KEY 环境变量）
-# 必须在此定义兜底值，否则 supervisord 解析 %(ENV_HERMES_API_KEY)s 失败。
-# 空值由 entrypoint.sh setup_hermes_api_key() 自动生成 32 位强密钥填充
-# （gateway 的 api_server 平台要求密钥 >=16 位否则不启动）
-ENV HERMES_API_KEY=""
-
-# Flowise 凭据兜底（supervisord.conf %(ENV_FLOWISE_USER)s / %(ENV_FLOWISE_PASSWORD)s 引用）
-# 运行时由 entrypoint.sh setup_flowise_credentials() 注入真实值：
-#   Secret 注入 > 持久化盘复用 > 自动生成强密码落盘
-ENV FLOWISE_USER=zephyr
-ENV FLOWISE_PASSWORD=""
-
-# ── 层 10: Portal 导航页 + 种子配置 ─────────────────────────────────────────
-COPY portal/index.html /var/www/portal/index.html
-COPY config/hermes-seed/ /opt/hermes-seed/
-COPY config/rclone.template.conf /opt/templates/rclone.template.conf
-
-# ── 安全加固：构建末尾 apt upgrade ───────────────────────────────────────────
-RUN apt-get update && \
-    apt-get upgrade -y && \
-    apt-get autoremove -y && \
-    rm -rf /var/lib/apt/lists/* /tmp/* /var/tmp/*
-
-# ── 最终配置 ────────────────────────────────────────────────────────────────
-
+ARG HERMES_REF=v2026.8.3
+# Install directly at the FINAL path; keep the editable source in the image.
+RUN git clone --depth 1 --branch "$HERMES_REF" https://github.com/NousResearch/hermes-agent.git /opt/hermes \
+    && python3 -m venv /opt/hermes-venv \
+    && /opt/hermes-venv/bin/pip install --no-cache-dir --upgrade pip setuptools wheel \
+    && /opt/hermes-venv/bin/pip install --no-cache-dir --retries 5 -e /opt/hermes \
+    && /opt/hermes-venv/bin/pip check \
+    && /opt/hermes-venv/bin/pip freeze > /opt/versions/hermes-requirements.txt \
+    && git -C /opt/hermes rev-parse HEAD > /opt/versions/hermes.txt \
+    && cd /tmp && /opt/hermes-venv/bin/hermes --help >/dev/null
+RUN useradd --uid 1001 --create-home --shell /bin/bash hermes \
+    && useradd --uid 1002 --system --no-create-home --shell /usr/sbin/nologin zephyr-auth \
+    && mkdir -p /opt/recovery /run/dbus /var/log/supervisor /opt/home-seed/Desktop \
+    && cp -a /etc/skel/. /opt/home-seed/ \
+    && rm -f /etc/nginx/sites-enabled/default
+ENV PATH=/opt/hermes-venv/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+ENV DATA_ROOT=/mnt/workspace/zephyr-v2 DESKTOP_GEOMETRY=1280x800 CHROME_NO_SANDBOX=0
+COPY recovery/ /opt/recovery/
+RUN chmod 755 /opt/recovery/*.sh \
+    && ln -s /opt/recovery/browser.sh /usr/local/bin/zephyr-browser \
+    && printf '%s\n' '#!/bin/sh' 'exec /opt/hermes-venv/bin/hermes "$@"' > /usr/local/bin/hermes \
+    && chmod 755 /usr/local/bin/hermes \
+    && test -f /usr/share/novnc/vnc.html \
+    && node -e "require('/opt/hermes-studio/node_modules/node-pty')"
 EXPOSE 7860
-
-# 健康检查（A8 修复：接入完整健康检查脚本）
-# 原实现仅 curl /health（Nginx 活着即判定健康，内部服务死亡无法感知）；
-# health-check.sh 检查 Nginx HTTP + supervisord 状态（硬失败）
-# + nginx/Xvnc/noVNC/hermes-gateway 进程存活（仅告警）
-HEALTHCHECK --interval=30s --timeout=15s --start-period=60s --retries=3 \
-    CMD /opt/scripts/health-check.sh || exit 1
-
-# 持久化卷声明（仅供文档参考，实际持久化由 ModelScope /mnt/workspace 管理）
-VOLUME ["/mnt/workspace"]
-
-ENTRYPOINT ["/opt/entrypoint.sh"]
+HEALTHCHECK --interval=30s --timeout=8s --start-period=180s --retries=3 \
+    CMD /usr/bin/python3 /opt/recovery/health.py --once || exit 1
+ENTRYPOINT ["/usr/bin/tini", "--", "/opt/recovery/entrypoint.sh"]
