@@ -367,7 +367,11 @@ def initialize_home(root: Path) -> None:
     if not xauthority.exists():
         atomic_write(xauthority, b'', APP_UID, APP_GID)
     # Cookie is not a bearer credential for the public web application.
-    subprocess.run(['/usr/bin/gosu', 'hermes', '/usr/bin/xauth', '-f', str(xauthority),
+    # Ubuntu 24.04 ships gosu in /usr/sbin, Debian older releases in /usr/bin.
+    gosu = shutil.which('gosu')
+    if not gosu:
+        raise OSError('gosu binary is required but was not found in PATH')
+    subprocess.run([gosu, 'hermes', '/usr/bin/xauth', '-f', str(xauthority),
                     'add', ':1', '.', secrets.token_hex(16)], check=True)
     password = os.environ.get('VNC_PASSWORD', '')
     vnc_file = home / '.vnc/passwd'
