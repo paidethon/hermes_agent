@@ -1,0 +1,69 @@
+name: recovery-image
+on:
+  workflow_dispatch:
+  push:
+    branches: [recovery/modelscope-cookie-auth]
+    paths:
+      - Dockerfile
+      - recovery/**
+      - tests/**
+      - .github/workflows/recovery-image.yml
+permissions:
+  contents: read
+  packages: write
+concurrency:
+  group: recovery-image-${{ github.ref }}
+  cancel-in-progress: false
+jobs:
+  build-test-publish:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@v4
+      - name: Configuration and real nginx integration tests
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y nginx python3-yaml python3-argon2
+          sudo systemctl stop nginx
+          /usr/bin/python3 -m unittest discover -s tests -v
+      - uses: docker/setup-buildx-action@v3
+      - name: Build candidate without publishing
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          platforms: linux/amd64
+          tags: hermes-recovery:test
+          load: true
+          push: false
+          provenance: false
+          cache-from: type=gha,scope=hermes-recovery
+          cache-to: type=gha,mode=max,scope=hermes-recovery
+      - name: Real container gate (no LLM key required)
+        run: /usr/bin/python3 tests/smoke_container.py
+      - name: Login to GitHub Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - name: Publish the exact tested image and generate deployment Dockerfile
+        env:
+          REPOSITORY: ${{ github.repository }}
+          COMMIT: ${{ github.sha }}
+        run: |
+          set -euo pipefail
+          IMAGE="ghcr.io/${REPOSITORY,,}:recovery-${COMMIT}"
+          docker tag hermes-recovery:test "$IMAGE"
+          docker push "$IMAGE"
+          PIN="$(docker image inspect "$IMAGE" --format '{{index .RepoDigests 0}}')"
+          test -n "$PIN"
+          mkdir -p deployment
+          printf 'FROM %s\nEXPOSE 7860\n' "$PIN" > deployment/Dockerfile
+          printf '%s\n' "$COMMIT" > deployment/source-commit.txt
+          printf '%s\n' "$PIN" > deployment/image-digest.txt
+          printf '\nTested image: `%s`\n' "$PIN" >> "$GITHUB_STEP_SUMMARY"
+          printf '\nMake this GHCR package public before a public ModelScope pull.\n' >> "$GITHUB_STEP_SUMMARY"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: modelscope-deployment
+          path: deployment/
