@@ -19,7 +19,11 @@ from urllib.parse import urlsplit
 
 import yaml
 from argon2 import PasswordHasher
-from argon2.exceptions import VerifyMismatchError, VerificationError, InvalidHashError
+from argon2.exceptions import VerifyMismatchError, VerificationError
+try:  # argon2-cffi >= 23.1 renamed InvalidHash to InvalidHashError.
+    from argon2.exceptions import InvalidHashError
+except ImportError:  # Ubuntu 24.04 ships 21.1 with the old name.
+    from argon2.exceptions import InvalidHash as InvalidHashError
 
 APP_UID = APP_GID = 1001
 AUTH_UID = AUTH_GID = 1002
