@@ -244,7 +244,18 @@ class NginxIntegrationTests(unittest.TestCase):
         status, headers, body = self.request('/desktop/vnc.html', 'zephyr_session=valid')
         self.assertEqual((status, body), (200, b'upstream-desktop'))
         self.assertIn('Secure', headers['Set-Cookie'])
-        self.assertEqual(headers['X-Frame-Options'], 'DENY')
+        csp = headers.get('Content-Security-Policy', '')
+        self.assertIn('frame-ancestors', csp)
+        self.assertIn('https://www.modelscope.cn', csp)
+        self.assertNotIn('X-Frame-Options', headers)
+
+    def test_auth_portal_allows_modelscope_framing_only(self):
+        status, headers, _ = self.request('/auth/', 'zephyr_session=valid')
+        self.assertEqual(status, 200)
+        csp = headers.get('Content-Security-Policy', '')
+        self.assertIn('frame-ancestors', csp)
+        self.assertIn('https://modelscope.cn', csp)
+        self.assertNotIn('X-Frame-Options', headers)
 
     def test_auth_failure_is_fail_closed(self):
         MockBackend.available = False
