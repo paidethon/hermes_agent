@@ -57,6 +57,13 @@ def await_ready():
     # Log availability only; do not dump application logs or environment secrets to CI.
     docker('exec', NAME, '/usr/bin/python3', '/opt/recovery/health.py', '--once', check=False)
     docker('exec', NAME, '/usr/bin/supervisorctl', '-c', '/run/zephyr/supervisord.conf', 'status', check=False)
+    # Keep the first boot failure diagnosable: the boot path prints no secrets.
+    docker('logs', '--tail', '150', NAME, check=False)
+    state = subprocess.run(['docker', 'inspect', '--format',
+        'container state: status={{.State.Status}} exitcode={{.State.ExitCode}} '
+        'oom={{.State.OOMKilled}} error={{.State.Error}}', NAME],
+        check=False, text=True, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL)
+    print(state.stdout, flush=True)
     raise RuntimeError('Actual image readiness failed; publishing is blocked')
 
 
