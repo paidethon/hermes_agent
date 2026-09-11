@@ -233,7 +233,7 @@ http {{
 
 def render_supervisor(root: Path, geometry: str, no_sandbox: str) -> str:
     env = (f'HOME="/home/hermes",USER="hermes",LOGNAME="hermes",DISPLAY=":1",'
-           f'XAUTHORITY="/home/hermes/.Xauthority",XDG_RUNTIME_DIR="/run/user/1001",'
+           f'XAUTHORITY="/run/user/1001/.Xauthority",XDG_RUNTIME_DIR="/run/user/1001",'
            f'XDG_SESSION_TYPE="x11",LIBGL_ALWAYS_SOFTWARE="1",QT_X11_NO_MITSHM="1",'
            f'KWIN_COMPOSE="N",DATA_ROOT="{root}",CHROME_NO_SANDBOX="{no_sandbox}",'
            f'HERMES_HOME="{root}/hermes",QT_IM_MODULE="fcitx",GTK_IM_MODULE="fcitx",'
@@ -363,9 +363,10 @@ def initialize_home(root: Path) -> None:
     }.items():
         if not (home / 'Desktop' / name).exists():
             atomic_write(home / 'Desktop' / name, contents, APP_UID, APP_GID, 0o700)
-    xauthority = home / '.Xauthority'
-    if not xauthority.exists():
-        atomic_write(xauthority, b'', APP_UID, APP_GID)
+    # The workspace mount is a network filesystem where xauth lock files time out.
+    # The cookie is regenerated on every boot, so keep it on local tmpfs instead.
+    xauthority = Path('/run/user/1001/.Xauthority')
+    atomic_write(xauthority, b'', APP_UID, APP_GID)
     # Cookie is not a bearer credential for the public web application.
     # Ubuntu 24.04 ships gosu in /usr/sbin, Debian older releases in /usr/bin.
     gosu = shutil.which('gosu')
