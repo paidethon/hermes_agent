@@ -107,7 +107,10 @@ def render_authelia(root: Path, origin: str, host: str, keys: dict[str, str]) ->
             'rules': [{'domain': host, 'policy': 'one_factor'}],
         },
         'session': {
-            'secret': keys['session'], 'name': 'zephyr_session', 'same_site': 'lax',
+            'secret': keys['session'], 'name': 'zephyr_session',
+            # ModelScope presents the app inside a cross-site iframe, so the
+            # session cookie must be SameSite=None (always Secure here).
+            'same_site': 'none',
             'inactivity': '30m', 'expiration': '12h', 'remember_me': '0',
             'cookies': [{'domain': host, 'authelia_url': origin + '/auth/',
                          'default_redirection_url': origin + '/'}],
@@ -124,10 +127,14 @@ def render_nginx(origin: str, host: str, authority: str, runtime: str = '/run/ze
                  port: int = 7860, auth_port: int = 9091, desktop_port: int = 6080,
                  health_port: int = 9092, worker_user: str = 'www-data') -> str:
     # Values come from validation, not user-supplied request headers.
-    protected = '''auth_request /internal/authelia/authz;
+    # ModelScope only exposes the app through its own iframe, so framing is
+    # restricted to ModelScope origins instead of denied outright.
+    frame_csp = ("Content-Security-Policy \"frame-ancestors 'self' "
+                 "https://www.modelscope.cn https://modelscope.cn\" always;")
+    protected = f'''auth_request /internal/authelia/authz;
             auth_request_set $auth_cookie $upstream_http_set_cookie;
             add_header Set-Cookie $auth_cookie always;
-            add_header X-Frame-Options DENY always;
+            add_header {frame_csp}
             add_header X-Content-Type-Options nosniff always;
             add_header Referrer-Policy no-referrer always;
             error_page 401 = @login;'''
@@ -166,7 +173,7 @@ http {{
         listen 0.0.0.0:{port} default_server;
         server_name {host};
         absolute_redirect off;
-        add_header X-Frame-Options DENY always;
+        add_header {frame_csp}
         add_header X-Content-Type-Options nosniff always;
         add_header Referrer-Policy no-referrer always;
         location = /healthz {{ access_log off; default_type text/plain; return 200 'alive\\n'; }}
@@ -198,6 +205,12 @@ http {{
             proxy_http_version 1.1;
             proxy_buffer_size 16k;
             proxy_buffers 4 16k;
+            # Authelia ships its own deny-framing headers; replace them so the
+            # portal is frameable only from ModelScope, like the rest of the app.
+            proxy_hide_header X-Frame-Options;
+            proxy_hide_header Content-Security-Policy;
+            add_header {frame_csp}
+            add_header X-Content-Type-Options nosniff always;
         }}
         location = / {{
             {protected}

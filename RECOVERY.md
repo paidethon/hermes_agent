@@ -130,9 +130,9 @@ EXPOSE 7860
 
 ## 7. 第一次使用及验收
 
-从魔搭打开应用的**独立页面**，不要在平台嵌入式 iframe 内测试登录。恢复版主动设置 X-Frame-Options: DENY，Cookie 按 HTTPS 与明确域名设置。
+从魔搭打开应用的**独立页面**，恢复版不再使用 X-Frame-Options: DENY，而是用 CSP frame-ancestors 仅允许 modelscope.cn 嵌入；Cookie 按 HTTPS 与明确域名设置。
 
-先通过 Authelia 表单登录，再进入桌面并输入单独的 VNC 密码。点击桌面的 Hermes Studio 快捷方式，或在**远程 KDE 内的 Chrome**打开：
+先通过 Authelia 表单登录（魔搭以受限 iframe 嵌入本应用，登录页已允许仅 modelscope.cn 框架嵌入；会话 Cookie 为 SameSite=None + Secure），再进入桌面并输入单独的 VNC 密码。点击桌面的 Hermes Studio 快捷方式，或在**远程 KDE 内的 Chrome**打开：
 
 ```text
 http://127.0.0.1:8648
