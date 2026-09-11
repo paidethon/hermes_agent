@@ -243,7 +243,7 @@ def render_supervisor(root: Path, geometry: str, no_sandbox: str) -> str:
         ('auth', 'zephyr-auth', '/usr/local/bin/authelia --config /run/zephyr/authelia.yml', 10),
         ('vnc', 'hermes', '/usr/bin/Xtigervnc :1 -localhost=1 -rfbport 5901 '
          f'-geometry {geometry} -depth 24 -SecurityTypes VncAuth '
-         '-rfbauth /home/hermes/.vnc/passwd -auth /home/hermes/.Xauthority -nolisten tcp', 20),
+         '-rfbauth /home/hermes/.vnc/passwd -auth /run/user/1001/.Xauthority -nolisten tcp', 20),
         ('desktop', 'hermes', '/opt/recovery/desktop.sh', 30),
         ('novnc', 'hermes', '/usr/bin/websockify --web=/usr/share/novnc 127.0.0.1:6080 127.0.0.1:5901', 40),
         ('studio', 'hermes', '/opt/recovery/studio.sh', 50),
