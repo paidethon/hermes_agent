@@ -387,17 +387,33 @@ def initialize_home(root: Path) -> None:
         raise OSError('gosu binary is required but was not found in PATH')
     subprocess.run([gosu, 'hermes', '/usr/bin/xauth', '-f', str(xauthority),
                     'add', ':1', '.', secrets.token_hex(16)], check=True)
-    password = os.environ.get('VNC_PASSWORD', '')
+    initialize_vnc_password(home, os.environ.get('VNC_PASSWORD', ''))
+
+
+def initialize_vnc_password(home: Path, password: str) -> None:
     vnc_file = home / '.vnc/passwd'
-    if password:
-        if len(password) != 8 or not all(33 <= ord(c) <= 126 for c in password):
-            raise ValueError('VNC_PASSWORD must be exactly 8 non-space ASCII characters')
-        result = subprocess.run(['/usr/bin/tigervncpasswd', '-f'],
-                                input=(password + '\n').encode(), stdout=subprocess.PIPE,
-                                stderr=subprocess.PIPE, check=True)
-        atomic_write(vnc_file, result.stdout, APP_UID, APP_GID)
-    elif not vnc_file.exists():
-        raise ValueError('VNC_PASSWORD is required on first boot')
+    if not password:
+        if not vnc_file.exists():
+            raise ValueError('VNC_PASSWORD is required on first boot')
+        return
+    if not 8 <= len(password) <= 64 or not all(33 <= ord(c) <= 126 for c in password):
+        raise ValueError('VNC_PASSWORD must be 8-64 printable ASCII characters')
+    # The VNC challenge-response protocol derives its key from only the first
+    # 8 characters; every client truncates the same way.
+    result = subprocess.run(['/usr/bin/tigervncpasswd', '-f'],
+                            input=(password[:8] + '\n').encode(), stdout=subprocess.PIPE,
+                            stderr=subprocess.PIPE, check=True)
+    atomic_write(vnc_file, result.stdout, APP_UID, APP_GID)
+
+
+def initialize_desktop_auth() -> None:
+    password = os.environ.get('DESKTOP_PASSWORD', '')
+    if not 8 <= len(password) <= 256 or any(ord(c) < 32 for c in password):
+        raise ValueError('DESKTOP_PASSWORD must be 8-256 characters without control characters')
+    # The KDE lock screen authenticates the hermes account against /etc/shadow,
+    # which lives in the ephemeral container layer; re-apply on every boot.
+    subprocess.run(['/usr/sbin/chpasswd'], input=f'hermes:{password}\n'.encode(), check=True,
+                   stdout=subprocess.PIPE, stderr=subprocess.PIPE)
 
 
 def initialize_model(root: Path) -> None:
@@ -441,6 +457,7 @@ def main() -> None:
         keys = {name: secrets.token_hex(32) for name in ('session', 'storage')}
         atomic_write(keys_file, json.dumps(keys), AUTH_UID, AUTH_GID)
     initialize_home(root)
+    initialize_desktop_auth()
     initialize_model(root)
     atomic_write(RUN / 'authelia.yml', render_authelia(root, origin, host, keys), AUTH_UID, AUTH_GID)
     atomic_write(RUN / 'nginx.conf', render_nginx(origin, host, authority), 0, 0, 0o644)

@@ -22,6 +22,7 @@ NAME = 'hermes-recovery-test-' + secrets.token_hex(4)
 ORIGIN = 'https://zephyr.test'
 PASSWORD = secrets.token_urlsafe(24)
 VNC_PASSWORD = secrets.token_hex(4)
+DESKTOP_PASSWORD = secrets.token_urlsafe(24)
 PORT = 17860
 
 
@@ -112,16 +113,21 @@ def websocket(cookie: str):
 
 def main():
     env = os.environ.copy()
-    env.update({'AUTH_PASSWORD': PASSWORD, 'VNC_PASSWORD': VNC_PASSWORD})
+    env.update({'AUTH_PASSWORD': PASSWORD, 'VNC_PASSWORD': VNC_PASSWORD,
+                'DESKTOP_PASSWORD': DESKTOP_PASSWORD})
     volume = NAME + '-data'
     try:
         docker('volume', 'create', volume, stdout=subprocess.DEVNULL)
         docker('run', '-d', '--name', NAME, '--shm-size=512m',
             '-p', f'127.0.0.1:{PORT}:7860', '-v', volume + ':/mnt/workspace',
             '-e', 'PUBLIC_ORIGIN=' + ORIGIN, '-e', 'AUTH_USERNAME=ciowner',
-            '-e', 'AUTH_PASSWORD', '-e', 'VNC_PASSWORD', IMAGE,
+            '-e', 'AUTH_PASSWORD', '-e', 'VNC_PASSWORD', '-e', 'DESKTOP_PASSWORD', IMAGE,
             env=env, stdout=subprocess.DEVNULL)
         await_ready()
+        shadow = docker('exec', NAME, '/bin/sh', '-c',
+                        "grep '^hermes:' /etc/shadow | cut -d: -f2",
+                        stdout=subprocess.PIPE).stdout.strip()
+        assert shadow.startswith('$'), 'KDE lock-screen password was not applied to the hermes account'
         status, headers, _ = get('/desktop/vnc.html')
         assert status == 302
         assert not any(k.lower() == 'www-authenticate' for k, _ in headers)
