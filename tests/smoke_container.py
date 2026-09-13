@@ -44,8 +44,13 @@ trap 'kill $xpid 2>/dev/null || true' EXIT
 sleep 3
 clients=$(xprop -root _NET_CLIENT_LIST | sed 's/.*window id # //')
 echo "CLIENTS=$clients"
-wid=$(printf '%s\n' $clients | head -n1)
-test -n "$wid"
+test -n "$clients"
+wid=
+for w in $clients; do
+    w=${w%,}
+    if xprop -id "$w" WM_CLASS 2>/dev/null | grep -q xterm; then wid=$w; break; fi
+done
+test -n "$wid" || { echo 'xterm window not found in client list'; exit 1; }
 extents=$(xprop -id "$wid" _NET_FRAME_EXTENTS)
 echo "FRAME=$extents"
 frame=$(echo "$extents" | sed 's/.*= //')
@@ -57,8 +62,8 @@ def docker(*args: str, check: bool = True, **kwargs):
     return subprocess.run(['docker', *args], check=check, text=True, **kwargs)
 
 
-def exec_out(*args: str) -> str:
-    return docker('exec', *args, stdout=subprocess.PIPE).stdout
+def exec_out(*args: str, check: bool = True) -> str:
+    return docker('exec', *args, check=check, stdout=subprocess.PIPE).stdout
 
 
 def get(path: str, cookie: str = '', method: str = 'GET', payload=None):
