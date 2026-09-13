@@ -146,9 +146,14 @@ def verify_lock_does_not_kill_kwin() -> None:
     by terminating the greeter (no VNC input driver needed in CI) and
     requires kwin_x11 to still own :1 afterwards.
     """
-    bus = exec_out(NAME, '/bin/sh', '-c',
-                   "tr '\\0' '\\n' < /proc/$(pgrep -u 1001 -x plasmashell | head -n1)/environ"
-                   " | sed -n 's/^DBUS_SESSION_BUS_ADDRESS=//p' | head -n1").strip()
+    # Read the session bus address as the desktop user: reading another
+    # uid's /proc/*/environ needs CAP_SYS_PTRACE, which default docker
+    # caps omit, so root's read came back empty.
+    bus = exec_out(*XENV, NAME, '/bin/sh', '-c',
+                   'for pid in $(pgrep -u 1001); do '
+                   "a=$(tr '\\0' '\\n' < /proc/$pid/environ 2>/dev/null"
+                   " | sed -n 's/^DBUS_SESSION_BUS_ADDRESS=//p' | head -n1); "
+                   '[ -n "$a" ] && { printf %s "$a"; break; }; done').strip()
     assert bus.startswith('unix:'), 'Plasma session bus address not found'
     docker('exec', *XENV, NAME, '/usr/bin/dbus-send', '--session', '--print-reply',
            f'--address={bus}', '--dest=org.freedesktop.ScreenSaver',
