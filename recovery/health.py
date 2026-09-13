@@ -1,13 +1,29 @@
 #!/usr/bin/python3
-"""Readiness means desktop + local Studio + auth respond, not that an LLM replied."""
+"""Readiness means a manageable desktop + local Studio + auth respond.
+
+A running plasmashell alone does not make the desktop usable: without the
+window manager, windows render but have no title bar and cannot be moved,
+maximized, minimized, or closed. The desktop probes therefore answer three
+different questions instead of one:
+  desktop - the Plasma shell process is alive
+  kwin    - the window manager process is alive
+  wm      - a window manager has actually claimed the X11 root window (EWMH)
+"""
 from concurrent.futures import ThreadPoolExecutor
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 import json
+import os
 import socket
 import subprocess
 import sys
 from urllib.error import URLError, HTTPError
 from urllib.request import build_opener, ProxyHandler
+
+# Must match the session environment rendered by bootstrap.render_supervisor();
+# a unit test pins this consistency.
+DISPLAY = ':1'
+XAUTHORITY = '/run/user/1001/.Xauthority'
+APP_UID = '1001'
 
 
 def http_ok(url: str) -> bool:
@@ -26,13 +42,33 @@ def tcp_ok() -> bool:
         return False
 
 
-def desktop_ok() -> bool:
+def _run(command: list[str], timeout: float = 3) -> bool:
+    # Probes run from supervisord, the Docker HEALTHCHECK, and CI exec calls;
+    # none of those callers is guaranteed to carry the session environment.
+    env = dict(os.environ, DISPLAY=DISPLAY, XAUTHORITY=XAUTHORITY)
     try:
-        return subprocess.run(['pgrep', '-u', '1001', '-x', 'plasmashell'],
-                              stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
-                              timeout=2).returncode == 0
+        return subprocess.run(command, env=env, stdout=subprocess.DEVNULL,
+                              stderr=subprocess.DEVNULL,
+                              timeout=timeout).returncode == 0
     except (OSError, subprocess.TimeoutExpired):
         return False
+
+
+def process_ok(binary: str) -> bool:
+    return _run(['pgrep', '-u', APP_UID, '-x', binary], timeout=2)
+
+
+def wm_ok() -> bool:
+    # Only an EWMH window manager publishes _NET_SUPPORTING_WM_CHECK on the
+    # root window; a bare X server leaves it unset. This catches "kwin died
+    # while Xvnc still runs", which a process check alone would miss if the
+    # process list were ever replaced by an equivalent.
+    return _run(['xprop', '-root', '_NET_SUPPORTING_WM_CHECK'])
+
+
+def desktop_ok() -> bool:
+    """True only when shell, WM process, and WM root-window ownership all hold."""
+    return process_ok('plasmashell') and process_ok('kwin_x11') and wm_ok()
 
 
 def checks() -> dict[str, bool]:
@@ -41,7 +77,9 @@ def checks() -> dict[str, bool]:
         'novnc': lambda: http_ok('http://127.0.0.1:6080/vnc.html'),
         'studio': lambda: http_ok('http://127.0.0.1:8648/'),
         'vnc': tcp_ok,
-        'desktop': desktop_ok,
+        'desktop': lambda: process_ok('plasmashell'),
+        'kwin': lambda: process_ok('kwin_x11'),
+        'wm': wm_ok,
     }
     with ThreadPoolExecutor(max_workers=len(probes)) as pool:
         values = list(pool.map(lambda fn: fn(), probes.values()))

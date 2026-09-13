@@ -2,7 +2,9 @@ name: recovery-image
 on:
   workflow_dispatch:
   push:
-    branches: [recovery/modelscope-cookie-auth]
+    branches:
+      - recovery/modelscope-cookie-auth
+      - main
     paths:
       - Dockerfile
       - recovery/**

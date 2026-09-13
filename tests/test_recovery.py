@@ -16,6 +16,7 @@ except ImportError:  # Unix-only; the nginx integration tests skip without it.
 import shutil
 import socket
 import subprocess
+import sys
 import tempfile
 import threading
 import time
@@ -25,9 +26,24 @@ from unittest.mock import patch
 import yaml
 
 ROOT = Path(__file__).resolve().parents[1]
+
+# subprocess resolves plain 'bash' to System32's WSL launcher on Windows
+# (CreateProcess searches System32 before PATH); prefer an explicit PATH hit
+# and fall back to a standard Git Bash location.
+BASH = shutil.which('bash')
+if BASH and sys.platform == 'win32' and 'system32' in BASH.lower():
+    for candidate in ('C:/Program Files/Git/usr/bin/bash.exe',
+                      'C:/Program Files (x86)/Git/usr/bin/bash.exe'):
+        if Path(candidate).exists():
+            BASH = candidate
+            break
+
 spec = importlib.util.spec_from_file_location('bootstrap', ROOT / 'recovery/bootstrap.py')
 bootstrap = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(bootstrap)
+spec_health = importlib.util.spec_from_file_location('health', ROOT / 'recovery/health.py')
+health = importlib.util.module_from_spec(spec_health)
+spec_health.loader.exec_module(health)
 
 
 class ConfigurationTests(unittest.TestCase):
@@ -76,7 +92,8 @@ class ConfigurationTests(unittest.TestCase):
 
     def test_shell_syntax(self):
         for path in (ROOT / 'recovery').glob('*.sh'):
-            subprocess.run(['bash', '-n', str(path)], check=True)
+            # as_posix(): Git Bash on Windows mangles backslash arguments.
+            subprocess.run([BASH, '-n', path.as_posix()], check=True)
 
     def test_install_uses_final_path(self):
         dockerfile = (ROOT / 'Dockerfile').read_text()
@@ -84,6 +101,7 @@ class ConfigurationTests(unittest.TestCase):
         self.assertIn('python3 -m venv /opt/hermes-venv', dockerfile)
         self.assertIn('cd /tmp && /opt/hermes-venv/bin/hermes --help', dockerfile)
 
+    @unittest.skipUnless(hasattr(os, 'chown'), 'POSIX-only: os.chown missing')
     def test_password_is_hashed_and_initialization_is_idempotent(self):
         with tempfile.TemporaryDirectory() as temp, patch.object(bootstrap.os, 'chown'):
             root = Path(temp)
@@ -110,6 +128,7 @@ class ConfigurationTests(unittest.TestCase):
             (root / 'auth').mkdir()
             bootstrap.initialize_auth(root, 'testowner', 'short')
 
+    @unittest.skipUnless(hasattr(os, 'chown'), 'POSIX-only: os.chown missing')
     def test_managed_file_symlink_is_not_overwritten(self):
         with tempfile.TemporaryDirectory() as temp, patch.object(bootstrap.os, 'chown'):
             root = Path(temp)
@@ -121,6 +140,7 @@ class ConfigurationTests(unittest.TestCase):
                 bootstrap.atomic_write(link, 'replaced', 1001, 1001)
             self.assertEqual(target.read_text(), 'untouched')
 
+    @unittest.skipUnless(hasattr(os, 'chown'), 'POSIX-only: os.chown missing')
     def test_vnc_password_uses_protocol_truncation(self):
         with tempfile.TemporaryDirectory() as temp, patch.object(bootstrap.os, 'chown'), \
                 patch.object(bootstrap.subprocess, 'run') as run:
@@ -162,6 +182,132 @@ class ConfigurationTests(unittest.TestCase):
         self.assertNotIn('8648', conf)
         self.assertNotIn('listen 8080', conf)
         self.assertIn('listen 0.0.0.0:7860', conf)
+
+
+class DesktopReadinessTests(unittest.TestCase):
+    """Regression for the 2026-09 incident: the image shipped without a window
+    manager, and "plasmashell alive" was misread as "desktop usable"."""
+
+    def test_dockerfile_declares_kwin_and_build_gate(self):
+        dockerfile = (ROOT / 'Dockerfile').read_text()
+        self.assertIn('kde-plasma-desktop kwin-x11', dockerfile)
+        # The trim must stay: kwin-x11 is added explicitly, not via Recommends.
+        self.assertIn('--no-install-recommends', dockerfile)
+        self.assertNotIn('kde-plasma-desktop sddm', dockerfile)
+        self.assertIn('FATAL: required desktop binary missing', dockerfile)
+        self.assertIn('test -x /usr/bin/kwin_x11', dockerfile)
+
+    def test_desktop_usable_requires_shell_kwin_and_wm(self):
+        with patch.object(health, 'process_ok',
+                          side_effect=lambda binary: binary == 'plasmashell'), \
+                patch.object(health, 'wm_ok', return_value=True):
+            self.assertFalse(health.desktop_ok(), 'kwin dead must fail desktop_ok')
+        with patch.object(health, 'process_ok', return_value=True), \
+                patch.object(health, 'wm_ok', return_value=False):
+            self.assertFalse(health.desktop_ok(), 'WM not owning :1 must fail desktop_ok')
+        with patch.object(health, 'process_ok', return_value=True), \
+                patch.object(health, 'wm_ok', return_value=True):
+            self.assertTrue(health.desktop_ok())
+
+    def test_checks_gate_readiness_on_window_manager(self):
+        with patch.object(health, 'http_ok', return_value=True), \
+                patch.object(health, 'tcp_ok', return_value=True), \
+                patch.object(health, 'process_ok',
+                             side_effect=lambda binary: binary == 'plasmashell'), \
+                patch.object(health, 'wm_ok', return_value=True):
+            state = health.checks()
+            self.assertTrue(state['desktop'])
+            self.assertFalse(state['kwin'])
+            self.assertFalse(all(state.values()),
+                             'plasmashell alive with kwin dead must not be ready')
+        with patch.object(health, 'http_ok', return_value=True), \
+                patch.object(health, 'tcp_ok', return_value=True), \
+                patch.object(health, 'process_ok', return_value=True), \
+                patch.object(health, 'wm_ok', return_value=True):
+            self.assertTrue(all(health.checks().values()))
+
+    def readyz_status(self, state: dict) -> int:
+        server = ThreadingHTTPServer(('127.0.0.1', 0), health.Handler)
+        threading.Thread(target=server.serve_forever, daemon=True).start()
+        try:
+            connection = http.client.HTTPConnection('127.0.0.1', server.server_address[1],
+                                                    timeout=4)
+            connection.request('GET', '/readyz')
+            response = connection.getresponse()
+            status, body = response.status, json.loads(response.read())
+            connection.close()
+            self.assertEqual(body, {'ready': status == 200})
+            return status
+        finally:
+            server.shutdown()
+            server.server_close()
+
+    def test_readyz_reports_broken_desktop_as_503(self):
+        # The exact incident: taskbar fine, every window uncontrollable.
+        broken = {'auth': True, 'novnc': True, 'studio': True, 'vnc': True,
+                  'desktop': True, 'kwin': False, 'wm': False}
+        with patch.object(health, 'checks', return_value=broken):
+            self.assertEqual(self.readyz_status(broken), 503)
+        healthy = dict(broken, kwin=True, wm=True)
+        with patch.object(health, 'checks', return_value=healthy):
+            self.assertEqual(self.readyz_status(healthy), 200)
+
+    def test_probe_environment_matches_supervisor_session(self):
+        raw = bootstrap.render_supervisor(Path('/mnt/workspace/test-v2'), '1280x800', '0')
+        self.assertIn(f'DISPLAY="{health.DISPLAY}"', raw)
+        self.assertIn(f'XAUTHORITY="{health.XAUTHORITY}"', raw)
+
+
+class DesktopPreflightTests(unittest.TestCase):
+    """desktop.sh must refuse to start a half-working desktop (fail fast)."""
+
+    SCRIPT = ROOT / 'recovery' / 'desktop.sh'
+
+    def run_script(self, stubs: dict[str, int | str], extra_env: dict[str, str] | None = None):
+        stub_dir = Path(tempfile.mkdtemp())
+        self.addCleanup(shutil.rmtree, stub_dir, ignore_errors=True)
+        for name, behavior in stubs.items():
+            stub = stub_dir / name
+            body = behavior if isinstance(behavior, str) else f'exit {behavior}'
+            stub.write_text(f'#!/bin/sh\n{body}\n')
+            stub.chmod(0o755)
+        # Stubs shadow any same-named system binaries; the rest of PATH keeps
+        # bash helpers (seq, sleep) available.
+        env = os.environ.copy()
+        env['PATH'] = os.pathsep.join([stub_dir.as_posix(), env.get('PATH', '')])
+        env['HOME'] = stub_dir.as_posix()
+        env.update(extra_env or {})
+        return subprocess.run([BASH, self.SCRIPT.as_posix()], env=env,
+                              capture_output=True, text=True, timeout=120)
+
+    def test_missing_binaries_fail_fast(self):
+        result = self.run_script({})
+        self.assertEqual(result.returncode, 1)
+        self.assertIn('FATAL: required KDE runtime binary missing: dbus-run-session',
+                      result.stderr)
+
+    def test_missing_kwin_fails_fast_even_with_rest_of_kde(self):
+        stubs = {'dbus-run-session': 0, 'startplasma-x11': 0, 'plasmashell': 0,
+                 'xdpyinfo': 0}  # kwin_x11 deliberately absent
+        result = self.run_script(stubs)
+        self.assertEqual(result.returncode, 1)
+        self.assertIn('FATAL: required KDE runtime binary missing: kwin_x11',
+                      result.stderr)
+        self.assertNotIn('startplasma', result.stdout)
+
+    def test_x_server_never_ready_refuses_to_start(self):
+        stubs = {'dbus-run-session': 0, 'startplasma-x11': 0, 'kwin_x11': 0,
+                 'plasmashell': 0, 'xdpyinfo': 3}
+        result = self.run_script(stubs, {'DESKTOP_X_WAIT_ATTEMPTS': '2'})
+        self.assertEqual(result.returncode, 1)
+        self.assertIn('X server did not become ready', result.stderr)
+
+    def test_ready_x_server_starts_session(self):
+        stubs = {'dbus-run-session': 'echo session-started', 'startplasma-x11': 0,
+                 'kwin_x11': 0, 'plasmashell': 0, 'xdpyinfo': 0}
+        result = self.run_script(stubs)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn('session-started', result.stdout)
 
 
 class MockBackend(BaseHTTPRequestHandler):
