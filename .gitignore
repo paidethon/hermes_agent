@@ -7,17 +7,17 @@ rclone.conf
 # 压缩包（项目资料归档，不进版本库）
 *.zip
 
-# 设计文档与审计报告（仅本地归档，不进版本库）
-docs/
-
 # 操作系统与编辑器
 .DS_Store
 Thumbs.db
 .vscode/
 .idea/
 
+# Python
+__pycache__/
+
 # 日志
 *.log
 
-# 含明文密钥的配置清单，仅本地保留，绝不入库
+# 含明文密钥的本地清单，仅本地保留，绝不入库
 魔搭Studio配置清单.md

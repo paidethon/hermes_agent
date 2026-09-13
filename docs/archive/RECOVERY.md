@@ -1,5 +1,8 @@
 # Hermes × 魔搭空间：核心链路恢复实现
 
+> **已归档（2026-09-13）**：本文是恢复版初版的实施记录，仅作历史参考。
+> 当前事实以 [README](../../README.md)、[docs/ARCHITECTURE](../ARCHITECTURE.md)、[docs/DEPLOYMENT](../DEPLOYMENT.md)、[docs/OPERATIONS](../OPERATIONS.md) 为准；两者冲突时以新文档为准。
+
 编制日期：2026-09-11。
 
 **这是可以加入仓库并执行构建、验收和部署的代码包，不是“已经替你上线”的声明。** 当前环境已运行 25 项测试，其中包含真实 Nginx 与模拟后端的集成测试；没有运行完整 Docker 镜像，没有登录或修改你的魔搭空间。完整镜像必须先通过随包 GitHub Actions 验收，再部署到魔搭。
