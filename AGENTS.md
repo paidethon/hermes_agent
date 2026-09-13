@@ -33,6 +33,7 @@
 8. **模型 ID 必须带前缀**：如 `Qwen/Qwen3-235B-A22B`，缺前缀 HTTP 400。
 9. **平台 WAF** 拦截默认 curl UA，脚本探活须带浏览器 UA。
 10. **单容器不是隔离沙箱**：不要在其中保存无关高权限凭据，不要假设容器间强隔离。
+11. **桌面三道防线**：`kwin-x11` 必须显式安装（Noble 把它放在 `kde-plasma-desktop` 的 Recommends，`--no-install-recommends` 会静默漏掉）；健康检查不能只看进程存活——**plasmashell 存活 ≠ 桌面可用**，`/readyz` 必须验证 kwin 进程与 EWMH root 接管；真实容器门禁会验证窗口确实被加框（见 ADR 0003）。
 
 ## 完成定义
 

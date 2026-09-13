@@ -26,7 +26,7 @@ supervisord（root）编排 8 个进程；配置生成到 /run/zephyr/（tmpfs�
 | dbus | root | — | 5 | 系统总线 |
 | auth | zephyr-auth (1002) | 127.0.0.1:9091 | 10 | Authelia 4.39，Cookie 会话认证 |
 | vnc | hermes (1001) | 127.0.0.1:5901 | 20 | Xtigervnc `:1`，VncAuth，`-nolisten tcp` |
-| desktop | hermes | — | 30 | KDE Plasma（desktop.sh：DBus + Plasma） |
+| desktop | hermes | — | 30 | KDE Plasma 会话（desktop.sh：preflight 校验 + `startplasma-x11`；KWin 为窗口管理器） |
 | novnc | hermes | 127.0.0.1:6080 | 40 | websockify，`/desktop/websockify` 校验 Origin |
 | studio | hermes | 127.0.0.1:8648 | 50 | Hermes Studio（Node 24，`dist/server/index.js`） |
 | health | hermes | — | 60 | health.py 常驻，对外暴露 `/readyz` |
@@ -85,7 +85,7 @@ entrypoint 在生成配置后、启动服务前 `unset` 全部密码环境变量
 
 ## 构建与版本固定
 
-多阶段 `Dockerfile`：Studio 构建（Node 24，`v0.6.39`）→ Ubuntu 24.04 运行时（KDE + TigerVNC + noVNC + Nginx + Authelia 4.39.25）→ Hermes Agent 独立 venv（`v2026.8.3`，装在最终路径并在 `/tmp` 验证可导入）。依赖版本由 `ARG` 固定，Authelia 下载带 SHA256 校验。
+多阶段 `Dockerfile`：Studio 构建（Node 24，`v0.6.39`）→ Ubuntu 24.04 运行时（KDE + TigerVNC + noVNC + Nginx + Authelia 4.39.25）→ Hermes Agent 独立 venv（`v2026.8.3`，装在最终路径并在 `/tmp` 验证可导入）。依赖版本由 `ARG` 固定，Authelia 下载带 SHA256 校验。KDE 安装保持 `--no-install-recommends`，窗口管理器 `kwin-x11` 必须显式列出（Noble 把它放在 Recommends，见 [ADR 0003](decisions/0003-kwin-x11-explicit-dependency.md)）；构建末尾 fail-fast 验证桌面关键二进制存在。
 
 ## 明确不包含（相对原版）
 

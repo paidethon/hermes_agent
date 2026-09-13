@@ -5,14 +5,17 @@
 ## 部署链路
 
 ```
-push recovery/modelscope-cookie-auth
+push main 或 push recovery/modelscope-cookie-auth（触及 Dockerfile / recovery/ / tests/ / workflow 自身）
+  或手动 workflow_dispatch（任意分支）
   → GitHub Actions recovery-image 工作流：
       单元测试 + Nginx 集成测试 → 构建候选镜像（不发布）
-      → tests/smoke_container.py 真实容器验收（登录/桌面/Studio/持久化哨兵）
+      → tests/smoke_container.py 真实容器验收（登录/桌面/Studio/窗口管理器/锁屏/持久化哨兵）
       → 验收通过才发布 GHCR → 生成部署文件（digest 固定 Dockerfile）
   → 魔搭空间仓库（master）只含 2 行 Dockerfile：FROM ghcr.io/…@sha256:<digest>
   → 平台拉取镜像部署（平台侧不构建）
 ```
+
+两个分支都在 push 触发列表里：recovery 分支是历史发布分支，main 是集成分支——两者任一触及运行时路径都会构建发布，杜绝「代码已合 main 但生产镜像没更新」的漂移。文档类改动（不含上述路径）不触发构建。
 
 验收失败时工作流不发布镜像、不产出部署文件；不要跳过门禁强行发布。
 

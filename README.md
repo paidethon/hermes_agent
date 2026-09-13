@@ -47,7 +47,7 @@
 | [docs/decisions/](docs/decisions/) | 架构决策记录（ADR） |
 | [docs/archive/RECOVERY.md](docs/archive/RECOVERY.md) | 恢复版初版实施记录（已被上述文档取代，仅存档） |
 | `recovery/` | 恢复层实现：bootstrap / entrypoint / 桌面与 Studio 启动 / 健康检查 |
-| `tests/` | 25 项单元 + Nginx 集成测试、容器冒烟验收 |
+| `tests/` | 单元 + Nginx 集成测试、真实容器冒烟验收（含 KWin 窗口管理门禁） |
 | `modelscope/`、`.env.example`、`docker-compose.yml`、`keepalive.yml` | **遗留**：原版全量架构资产，当前镜像不使用 |
 
 ## 测试

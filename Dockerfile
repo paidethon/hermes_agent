@@ -21,7 +21,7 @@ ENV DEBIAN_FRONTEND=noninteractive TZ=Asia/Shanghai LANG=C.UTF-8 LC_ALL=C.UTF-8
 RUN apt-get update && apt-get install -y --no-install-recommends \
     ca-certificates curl git gnupg tini nginx supervisor gosu procps \
     python3 python3-venv python3-yaml python3-argon2 build-essential \
-    kde-plasma-desktop konsole dolphin kate dbus-x11 dbus-daemon \
+    kde-plasma-desktop kwin-x11 konsole dolphin kate dbus-x11 dbus-daemon \
     tigervnc-standalone-server tigervnc-tools novnc python3-websockify \
     xauth x11-utils x11-xserver-utils xterm fonts-noto-cjk \
     fcitx5 fcitx5-chinese-addons fcitx5-frontend-qt5 fcitx5-frontend-gtk3 \
@@ -75,6 +75,14 @@ RUN chmod 755 /opt/recovery/*.sh \
     && chmod 755 /usr/local/bin/hermes \
     && test -f /usr/share/novnc/vnc.html \
     && node -e "require('/opt/hermes-studio/node_modules/node-pty')"
+# Noble lists kwin-x11 only as a Recommends of kde-plasma-desktop, so a trimmed
+# install can still build a session with no window manager: windows render but
+# have no title bar and cannot be moved, maximized, or closed (2026-09 incident).
+# Fail the build here instead of discovering it inside a running deployment.
+RUN for binary in startplasma-x11 kwin_x11 plasmashell dbus-run-session Xtigervnc xdpyinfo xprop; do \
+        command -v "$binary" >/dev/null || { echo "FATAL: required desktop binary missing: $binary" >&2; exit 1; }; \
+    done \
+    && test -x /usr/bin/kwin_x11
 EXPOSE 7860
 HEALTHCHECK --interval=30s --timeout=8s --start-period=180s --retries=3 \
     CMD /usr/bin/python3 /opt/recovery/health.py --once || exit 1
