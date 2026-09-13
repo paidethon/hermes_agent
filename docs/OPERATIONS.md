@@ -6,18 +6,24 @@
 
 ```bash
 curl -fsS http://127.0.0.1:7860/healthz   # Nginx 活着（无鉴权）
-curl -fsS http://127.0.0.1:7860/readyz    # Auth/noVNC/VNC/Studio/Plasma 全就绪（无鉴权）
-python3 /opt/recovery/health.py --once    # 容器内分层健康五项
+curl -fsS http://127.0.0.1:7860/readyz    # 全部就绪才 200（无鉴权）
+python3 /opt/recovery/health.py --once    # 容器内分层健康七项探针
 ```
 
-`/healthz` 只代表 Nginx 存活；`/readyz` 不测试付费模型调用。容器内桌面终端用不了 `supervisorctl`（`/run/zephyr/supervisord.conf` 为 root 0600），服务状态一律走 health.py 或 `/readyz`。
+`/readyz` 聚合七项探针：`auth`（Authelia）、`novnc`、`studio`、`vnc`（5901 可达）、
+`desktop`（plasmashell 进程）、`kwin`（kwin_x11 进程）、`wm`（EWMH root 接管，
+`xprop -root _NET_SUPPORTING_WM_CHECK`）。**`plasmashell` 存活 ≠ 桌面可用**：
+没有窗口管理器时窗口没有标题栏、不能拖动/最大化/关闭，所以 kwin 与 wm 任一为 false
+即 503。探针不测试付费模型调用。容器内桌面终端用不了 `supervisorctl`
+（`/run/zephyr/supervisord.conf` 为 root 0600），服务状态一律走 health.py 或 `/readyz`。
 
 ## 验收流程
 
 1. **免进容器快验**：浏览器打开应用的 `/readyz`，应返回 `{"ready": true}`；
 2. **三层密码实测**：Authelia 表单登录 → VNC 密码进桌面 → 桌面空闲锁屏后用 `DESKTOP_PASSWORD` 解锁；
-3. **容器内功能**：`hermes --help` 正常；`python3 /opt/recovery/model_probe.py` 确认云 API 连通（`--chat` 会真实消耗额度，手工执行）；让 Agent 在 `DATA_ROOT/work` 下写读一个测试文件，验证真实工具执行；
-4. **持久化**：文件写入 `/mnt/workspace` 后重部署，确认仍在；重启后浏览器会话、模型配置可恢复。
+3. **桌面可管理**：打开 Konsole 等窗口，确认有标题栏，且拖动、最大化、还原、最小化、关闭全部可用；锁屏解锁后与重部署后再各验证一遍（KWin 必须存活，见 ADR 0003）；
+4. **容器内功能**：`hermes --help` 正常；`python3 /opt/recovery/model_probe.py` 确认云 API 连通（`--chat` 会真实消耗额度，手工执行）；让 Agent 在 `DATA_ROOT/work` 下写读一个测试文件，验证真实工具执行；
+5. **持久化**：文件写入 `/mnt/workspace` 后重部署，确认仍在；重启后浏览器会话、模型配置可恢复。
 
 验收边界（哪些不在保证范围）见 `docs/recovery/VERIFICATION.md`。
 
@@ -33,6 +39,7 @@ python3 /opt/recovery/health.py --once    # 容器内分层健康五项
 
 | 症状 | 原因 / 处理 |
 |---|---|
+| 窗口无标题栏、不能拖动/最大化/关闭 | 窗口管理器缺失或死亡：`/readyz` 的 `kwin`/`wm` 探针为 false；容器内查 `pgrep -a kwin_x11` 与 `xprop -root _NET_SUPPORTING_WM_CHECK`（需 `DISPLAY=:1 XAUTHORITY=/run/user/1001/.Xauthority`）。镜像层修复见 ADR 0003，不要用运行时 apt install 兜底 |
 | 登录后又弹回登录页 | `PUBLIC_ORIGIN` 与实际域名不一致，或 Cookie 的 Secure/Domain/Set-Cookie 被入口改写；不要回退 Basic Auth |
 | noVNC 打开但连不上 | 浏览器 Network 查 `/desktop/websockify` 是否 101、Origin 是否正确，再查 5901 与桌面进程 |
 | Auth/桌面目录 permission denied | 用管理员终端核对挂载属主与 uid 写权限；不要盲目 chmod 777，也不要把整套服务切到 root |
