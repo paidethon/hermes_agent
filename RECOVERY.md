@@ -117,7 +117,8 @@ EXPOSE 7860
 | PUBLIC_ORIGIN | 魔搭显示的实际应用 HTTPS 源地址，不带路径；不是 www.modelscope.cn/studios/... 管理页。不要仅根据用户名猜测域名。 |
 | AUTH_USERNAME | 例如 zephyr，使用小写字母、数字、下划线或连字符。 |
 | AUTH_PASSWORD | 新生成的至少 16 字符密码；仅保存 Argon2 哈希，未提供则首次启动失败关闭。 |
-| VNC_PASSWORD | 首次启动必填，恰好 8 个非空格 ASCII 字符；不要与外层密码相同。 |
+| VNC_PASSWORD | 首次启动必填；8-64 个可打印 ASCII 字符。VNC 协议只取前 8 位，更长输入按协议截断。不要与外层密码相同。 |
+| DESKTOP_PASSWORD | 必填；8-256 个字符且不含控制字符。容器每次启动用 chpasswd 写入 hermes 账户，KDE 空闲锁屏因此可解锁；/etc/shadow 在容器可写层不持久，故每次启动重新应用。 |
 | OPENAI_BASE_URL | 你已确认可用的 OpenAI 兼容 HTTPS API 基础地址。 |
 | OPENAI_API_KEY | 对应供应商的运行时密钥。 |
 | HERMES_MODEL | 该账号真正有权限调用的模型完整 ID，不要照抄旧截图的模型名。 |
@@ -126,7 +127,7 @@ EXPOSE 7860
 
 前四项用于建立登录和桌面。云模型三项可以稍后配置；未配置时界面就绪不代表 Agent 能回答。模型只在没有现存 config.yaml 时由环境初始化；已有配置优先保留，后续切换用 `hermes model`，不能靠更改 HERMES_MODEL 强行覆盖历史设置。
 
-外层表单登录与 VNC 密码是两层口令，**不是双因素认证**。VNC 传统认证的密码长度限制不是外层登录密码也只能用 8 位的理由。
+外层表单登录与 VNC 密码是两层口令，**不是双因素认证**。VNC 传统认证的密码长度限制不是外层登录密码也只能用 8 位的理由；DESKTOP_PASSWORD 与外层登录密码相互独立，仅用于解锁桌面会话。
 
 ## 7. 第一次使用及验收
 

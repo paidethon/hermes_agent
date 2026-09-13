@@ -9,7 +9,10 @@ import importlib.util
 import json
 import os
 from pathlib import Path
-import pwd
+try:
+    import pwd
+except ImportError:  # Unix-only; the nginx integration tests skip without it.
+    pwd = None
 import shutil
 import socket
 import subprocess
@@ -118,6 +121,41 @@ class ConfigurationTests(unittest.TestCase):
                 bootstrap.atomic_write(link, 'replaced', 1001, 1001)
             self.assertEqual(target.read_text(), 'untouched')
 
+    def test_vnc_password_uses_protocol_truncation(self):
+        with tempfile.TemporaryDirectory() as temp, patch.object(bootstrap.os, 'chown'), \
+                patch.object(bootstrap.subprocess, 'run') as run:
+            run.return_value = subprocess.CompletedProcess([], 0, stdout=b'vnc-hash')
+            home = Path(temp) / 'home'
+            (home / '.vnc').mkdir(parents=True)
+            bootstrap.initialize_vnc_password(home, 'Vnc114514')
+            self.assertEqual((home / '.vnc/passwd').read_text(), 'vnc-hash')
+            self.assertEqual(run.call_args.kwargs['input'], b'Vnc11451\n')
+
+    def test_vnc_password_rejects_invalid_values(self):
+        for value in ['', '7chars!', 'Vnç11451', 'V' + 'x' * 64]:
+            with self.subTest(length=len(value)), self.assertRaises(ValueError):
+                bootstrap.initialize_vnc_password(Path('/nonexistent-home'), value)
+
+    def test_vnc_password_optional_when_file_exists(self):
+        with tempfile.TemporaryDirectory() as temp:
+            home = Path(temp)
+            (home / '.vnc').mkdir()
+            (home / '.vnc/passwd').write_bytes(b'existing')
+            bootstrap.initialize_vnc_password(home, '')
+
+    def test_desktop_password_applied_via_chpasswd(self):
+        with patch.dict(os.environ, {'DESKTOP_PASSWORD': 'kde-lock-test'}), \
+                patch.object(bootstrap.subprocess, 'run') as run:
+            bootstrap.initialize_desktop_auth()
+            self.assertEqual(run.call_args.kwargs['input'], b'hermes:kde-lock-test\n')
+
+    def test_desktop_password_rejects_weak_values(self):
+        for value in ['', 'short', 'x' * 257, 'bad\nvalue']:
+            with self.subTest(length=len(value)), \
+                    patch.dict(os.environ, {'DESKTOP_PASSWORD': value}), \
+                    self.assertRaises(ValueError):
+                bootstrap.initialize_desktop_auth()
+
     def test_no_public_studio_reverse_proxy(self):
         conf = bootstrap.render_nginx('https://zephyr.test', 'zephyr.test', 'zephyr.test')
         self.assertNotIn('auth_basic', conf)
@@ -161,7 +199,7 @@ class MockBackend(BaseHTTPRequestHandler):
         pass
 
 
-@unittest.skipUnless(shutil.which('nginx'), 'nginx binary not installed')
+@unittest.skipUnless(shutil.which('nginx') and pwd, 'nginx binary not installed')
 class NginxIntegrationTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
