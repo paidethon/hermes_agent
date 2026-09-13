@@ -155,8 +155,10 @@ def verify_lock_does_not_kill_kwin() -> None:
                    " | sed -n 's/^DBUS_SESSION_BUS_ADDRESS=//p' | head -n1); "
                    '[ -n "$a" ] && { printf %s "$a"; break; }; done').strip()
     assert bus.startswith('unix:'), 'Plasma session bus address not found'
-    docker('exec', *XENV, NAME, '/usr/bin/dbus-send', '--session', '--print-reply',
-           f'--address={bus}', '--dest=org.freedesktop.ScreenSaver',
+    # dbus-send rejects --session combined with an explicit address; --bus
+    # alone targets the session bus we just discovered.
+    docker('exec', *XENV, NAME, '/usr/bin/dbus-send', '--print-reply',
+           f'--bus={bus}', '--dest=org.freedesktop.ScreenSaver',
            '/ScreenSaver', 'org.freedesktop.ScreenSaver.Lock')
     time.sleep(5)
     greeter = exec_out(NAME, '/usr/bin/pgrep', '-u', '1001', '-f', 'kscreenlocker_greet').strip()
