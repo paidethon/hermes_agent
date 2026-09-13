@@ -263,7 +263,8 @@ class DesktopPreflightTests(unittest.TestCase):
 
     SCRIPT = ROOT / 'recovery' / 'desktop.sh'
 
-    def run_script(self, stubs: dict[str, int | str], extra_env: dict[str, str] | None = None):
+    def run_script(self, stubs: dict[str, int | str], extra_env: dict[str, str] | None = None,
+                   include_system_path: bool = True):
         stub_dir = Path(tempfile.mkdtemp())
         self.addCleanup(shutil.rmtree, stub_dir, ignore_errors=True)
         for name, behavior in stubs.items():
@@ -272,16 +273,20 @@ class DesktopPreflightTests(unittest.TestCase):
             stub.write_text(f'#!/bin/sh\n{body}\n')
             stub.chmod(0o755)
         # Stubs shadow any same-named system binaries; the rest of PATH keeps
-        # bash helpers (seq, sleep) available.
+        # bash helpers (seq, sleep) available. The stub-only PATH makes the
+        # first-missing-binary assertions deterministic on any host.
         env = os.environ.copy()
-        env['PATH'] = os.pathsep.join([stub_dir.as_posix(), env.get('PATH', '')])
+        path_parts = [stub_dir.as_posix()]
+        if include_system_path:
+            path_parts.append(env.get('PATH', ''))
+        env['PATH'] = os.pathsep.join(path_parts)
         env['HOME'] = stub_dir.as_posix()
         env.update(extra_env or {})
         return subprocess.run([BASH, self.SCRIPT.as_posix()], env=env,
                               capture_output=True, text=True, timeout=120)
 
     def test_missing_binaries_fail_fast(self):
-        result = self.run_script({})
+        result = self.run_script({}, include_system_path=False)
         self.assertEqual(result.returncode, 1)
         self.assertIn('FATAL: required KDE runtime binary missing: dbus-run-session',
                       result.stderr)
@@ -289,7 +294,7 @@ class DesktopPreflightTests(unittest.TestCase):
     def test_missing_kwin_fails_fast_even_with_rest_of_kde(self):
         stubs = {'dbus-run-session': 0, 'startplasma-x11': 0, 'plasmashell': 0,
                  'xdpyinfo': 0}  # kwin_x11 deliberately absent
-        result = self.run_script(stubs)
+        result = self.run_script(stubs, include_system_path=False)
         self.assertEqual(result.returncode, 1)
         self.assertIn('FATAL: required KDE runtime binary missing: kwin_x11',
                       result.stderr)
