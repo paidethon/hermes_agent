@@ -1,3 +1,5 @@
+> **遗留文档（原版全量架构）**：本文描述的 llama.cpp / Open WebUI / Flowise 集成不在当前恢复版镜像中，仅作历史参考。当前架构见 `docs/ARCHITECTURE.md`。
+
 # Zephyr AI Desktop — 模型集成评估报告
 
 > **维护者**：极客-AI模型通
