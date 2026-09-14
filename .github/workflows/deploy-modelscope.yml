@@ -81,10 +81,13 @@ jobs:
         run: |
           {
             echo '## ModelScope release'
-            test -f .release/space-shas.txt && \
-              echo "space shas (old -> new): $(cat .release/space-shas.txt)" || true
-            test -f deployment/image-digest.txt && \
-              echo "image: \`sha256:$(cat deployment/image-digest.txt)\`" || true
-            test -f deployment/source-commit.txt && \
-              echo "source: ${{ github.repository }}@$(cat deployment/source-commit.txt)" || true
+            if [ -f .release/space-shas.txt ]; then
+              echo "space shas (old -> new): $(cat .release/space-shas.txt)"
+            fi
+            if [ -f deployment/image-digest.txt ]; then
+              echo "image: \`sha256:$(cat deployment/image-digest.txt)\`"
+            fi
+            if [ -f deployment/source-commit.txt ]; then
+              echo "source: ${{ github.repository }}@$(cat deployment/source-commit.txt)"
+            fi
           } >> "$GITHUB_STEP_SUMMARY"

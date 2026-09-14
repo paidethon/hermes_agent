@@ -91,6 +91,7 @@ jobs:
       - name: Record candidate image size
         if: always()
         run: |
+          # shellcheck disable=SC2016  # docker Go templates need literal braces
           docker image inspect hermes-recovery:test \
             --format 'image_size_bytes={{.Size}}' >> "$GITHUB_STEP_SUMMARY" || true
       - name: Real container gate (no LLM key required)
@@ -107,6 +108,7 @@ jobs:
           COMMIT: ${{ github.sha }}
         run: |
           set -euo pipefail
+          # shellcheck disable=SC2016  # docker Go templates need literal braces
           IMAGE="ghcr.io/${REPOSITORY,,}:recovery-${COMMIT}"
           docker tag hermes-recovery:test "$IMAGE"
           docker push "$IMAGE"
