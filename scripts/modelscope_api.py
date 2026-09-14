@@ -16,6 +16,7 @@ import urllib.error
 import urllib.request
 
 API_BASE = 'https://modelscope.cn/api/v1'
+OPENAPI_BASE = 'https://modelscope.cn/openapi/v1'
 BROWSER_UA = ('Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 '
               '(KHTML, like Gecko) Chrome/128.0.0.0 Safari/537.36')
 
@@ -39,14 +40,14 @@ def _space_id() -> str:
 
 
 def request(path: str, method: str = 'GET', payload: dict | None = None,
-            timeout: int = 30) -> dict:
+            timeout: int = 30, base: str = API_BASE) -> dict:
     """Authenticated OpenAPI call returning parsed JSON.
 
     Error bodies are never printed raw (they may echo request metadata); only
     the HTTP status is surfaced."""
     data = json.dumps(payload).encode() if payload is not None else None
     request_obj = urllib.request.Request(
-        API_BASE + path, data=data, method=method,
+        base + path, data=data, method=method,
         headers={'Authorization': 'Bearer ' + _token(),
                  'Content-Type': 'application/json'})
     try:
@@ -95,7 +96,11 @@ def space_status() -> str:
 def trigger_deploy() -> dict:
     # POST /deploy is a restart-type call: trigger exactly once per release,
     # never use it for polling (GET /status is the side-effect-free read).
-    return request(f'/studio/{_space_id()}/deploy', method='POST', payload={})
+    # The deploy trigger lives under /openapi/v1/studios/ (plural, openapi
+    # prefix) — /api/v1/studio/ answers 404 for it (verified live 2026-09-14).
+    owner, name = _space_id().split('/')
+    return request(f'/studios/{owner}/{name}/deploy', method='POST', payload={},
+                   base=OPENAPI_BASE)
 
 
 def app_base_url() -> str:
