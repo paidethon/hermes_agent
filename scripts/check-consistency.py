@@ -130,7 +130,9 @@ for moved in ('modelscope/', 'portal/', 'config/hermes-seed'):
 # --- 6. Runtime modules a fresh checkout must never lose ---------------------
 # (extended as new runtime entry points land)
 for required in ('recovery/bootstrap.py', 'recovery/health.py', 'recovery/entrypoint.sh',
-                 'recovery/desktop-watchdog.py', '.env.recovery.example'):
+                 'recovery/desktop-watchdog.py', 'recovery/diagnose.sh',
+                 'scripts/migrate-data.sh', 'scripts/smoke-container.sh',
+                 '.env.recovery.example'):
     if not os.path.exists(os.path.join(ROOT, required)):
         fail(f'required runtime/doc file missing: {required}')
 

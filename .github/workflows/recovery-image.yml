@@ -1,3 +1,6 @@
+# Static quality gates for the whole repository, then build → real container
+# gate → publish. Static checks are cheap and run first so a lint failure never
+# burns a 20-minute image build.
 name: recovery-image
 on:
   workflow_dispatch:
@@ -5,10 +8,13 @@ on:
     branches:
       - recovery/modelscope-cookie-auth
       - main
+      - nightly/**
     paths:
       - Dockerfile
       - recovery/**
       - tests/**
+      - scripts/**
+      - docker-compose.yml
       - .github/workflows/recovery-image.yml
 permissions:
   contents: read
@@ -17,7 +23,43 @@ concurrency:
   group: recovery-image-${{ github.ref }}
   cancel-in-progress: false
 jobs:
+  static-checks:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+      - name: Shell syntax + shellcheck
+        run: |
+          for f in recovery/*.sh scripts/*.sh; do bash -n "$f"; done
+          shellcheck --severity=warning recovery/*.sh scripts/*.sh
+      - name: Python syntax + unit tests + config consistency
+        run: |
+          python3 -m compileall -q recovery tests scripts
+          python3 -m unittest discover -s tests -v
+          python3 scripts/check-consistency.py
+      - name: Docs audit (broken links fail the run)
+        run: python3 scripts/docs-audit.py
+      - uses: hadolint/hadolint-action@v3.1.0
+        with:
+          dockerfile: Dockerfile
+          failure-threshold: warning
+          ignore: DL3008,DL3013
+      - name: actionlint (workflow syntax + semantics)
+        run: |
+          curl -fsSL --retry 5 \
+            https://github.com/rhysd/actionlint/releases/download/v1.7.7/actionlint_1.7.7_linux_amd64.tar.gz \
+            | tar -xz -C /usr/local/bin actionlint
+          actionlint -color
+      - name: Compose file is a valid rehearsal of the production image
+        run: |
+          AUTH_PASSWORD=ci-dummy-password-0123456789 \
+          VNC_PASSWORD=ci-dummy-vnc-pass \
+          DESKTOP_PASSWORD=ci-dummy-desktop-pass-0123456789 \
+          docker compose config --quiet && echo 'compose config: OK'
   build-test-publish:
+    needs: static-checks
     runs-on: ubuntu-24.04
     timeout-minutes: 120
     steps:

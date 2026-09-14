@@ -27,6 +27,32 @@ python3 /opt/recovery/health.py --once    # 容器内分层健康七项探针
 
 验收边界（哪些不在保证范围）见 `docs/recovery/VERIFICATION.md`。
 
+## 统一诊断
+
+`bash /opt/recovery/diagnose.sh`（管理员终端 root 运行；`--save` 写入
+`DATA_ROOT/diagnostics/diagnose-<时间戳>.txt`，保留最新 10 份）：一次性输出版本标识
+（app/hermes/studio commit、镜像构建时间）、healthz/readyz、supervisor 服务状态、
+桌面九探针细节（plasmashell/kwin/wm/watchdog 状态）、内存、磁盘、监听端口、
+按内存排序的进程表。全部输出经过密钥脱敏（sk-/ghp_/ms-/Bearer 模式替换），
+不 dump 任何进程环境。watchdog 自身的修复历史与诊断包也在
+`DATA_ROOT/diagnostics/watchdog-*`（同样保留 10 份）。
+
+## 桌面自愈
+
+`recovery/desktop-watchdog.py`（supervisor 程序 `watchdog`，root）处理「活着但坏掉」
+的桌面：KWin 死亡/未接管 root → `kwin_x11 --replace` → 仍失败 → 重启整个桌面会话；
+X 挂死 → 重启 VNC；冻结（T 态）进程 → SIGCONT；FATAL 程序 → 拉起。每个问题梯级
+只走一遍，全局修复预算默认 4 次/30 分钟，超出后只记录不再动手（禁止无限重启）。
+预算与宽限可用 `WATCHDOG_BUDGET_MAX` / `WATCHDOG_BUDGET_WINDOW` /
+`WATCHDOG_STARTUP_GRACE` / `WATCHDOG_LOOP_SECONDS` 调整（空间 Variables 注入）。
+
+## 旧数据迁移
+
+`bash scripts/migrate-data.sh --dry-run`（宿主或容器管理员终端）：列出旧
+`/mnt/workspace/zephyr` 树中可迁移内容；`--apply` 复制到
+`DATA_ROOT/import/zephyr-legacy/` 并以 sha256 清单校验。**绝不覆盖/删除任何已有
+数据**；幂等可重复；合并进活动目录是最后一步显式手工操作（脚本末尾打印命令）。
+
 ## 备份
 
 `bash /opt/recovery/backup.sh`（**必须管理员终端 root 运行**）：
@@ -39,7 +65,7 @@ python3 /opt/recovery/health.py --once    # 容器内分层健康七项探针
 
 | 症状 | 原因 / 处理 |
 |---|---|
-| 窗口无标题栏、不能拖动/最大化/关闭 | 窗口管理器缺失或死亡：`/readyz` 的 `kwin`/`wm` 探针为 false；容器内查 `pgrep -a kwin_x11` 与 `xprop -root _NET_SUPPORTING_WM_CHECK`（需 `DISPLAY=:1 XAUTHORITY=/run/user/1001/.Xauthority`）。镜像层修复见 ADR 0003，不要用运行时 apt install 兜底 |
+| 窗口无标题栏、不能拖动/最大化/关闭 | 窗口管理器缺失或死亡：`/readyz` 的 `kwin`/`wm` 探针为 false；容器内查 `pgrep -a kwin_x11` 与 `xprop -root _NET_SUPPORTING_WM_CHECK`（需 `DISPLAY=:1 XAUTHORITY=/run/user/1001/.Xauthority`）。watchdog 应在数分钟内自愈（`DATA_ROOT/diagnostics/watchdog-*` 留有诊断）；若反复复发，把诊断包交给维护者——镜像层修复见 ADR 0003，不要用运行时 apt install 兜底 |
 | 登录后又弹回登录页 | `PUBLIC_ORIGIN` 与实际域名不一致，或 Cookie 的 Secure/Domain/Set-Cookie 被入口改写；不要回退 Basic Auth |
 | noVNC 打开但连不上 | 浏览器 Network 查 `/desktop/websockify` 是否 101、Origin 是否正确，再查 5901 与桌面进程 |
 | Auth/桌面目录 permission denied | 用管理员终端核对挂载属主与 uid 写权限；不要盲目 chmod 777，也不要把整套服务切到 root |
