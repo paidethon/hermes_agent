@@ -10,7 +10,7 @@ for binary in dbus-run-session startplasma-x11 kwin_x11 plasmashell xdpyinfo; do
     fi
 done
 attempts="${DESKTOP_X_WAIT_ATTEMPTS:-60}"
-for attempt in $(seq 1 "$attempts"); do
+for _ in $(seq 1 "$attempts"); do
     if xdpyinfo -display :1 >/dev/null 2>&1; then
         exec dbus-run-session -- startplasma-x11
     fi

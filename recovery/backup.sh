@@ -30,7 +30,7 @@ trap resume EXIT
 # Never snapshot live SQLite databases by copying only their .db files.
 if pgrep -u 1001 >/dev/null; then
     pkill -TERM -u 1001 || true
-    for n in $(seq 1 20); do
+    for _ in $(seq 1 20); do
         pgrep -u 1001 >/dev/null || break
         sleep 1
     done
