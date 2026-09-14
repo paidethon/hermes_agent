@@ -211,15 +211,12 @@ class RepairBudget:
 
 def action_runner(action: str) -> tuple[bool, str]:
     if action == 'replace-kwin':
-        # Detached: kwin --replace keeps running as the session WM.
-        try:
-            subprocess.run(as_desktop(['kwin_x11', '--replace']),
-                           start_new_session=True,
-                           stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
-                           timeout=10, check=False)
-            return True, 'kwin_x11 --replace dispatched'
-        except (OSError, subprocess.TimeoutExpired) as exc:
-            return False, f'replace failed: {type(exc).__name__}'
+        # setsid -f: fork the replacement window manager into its own session
+        # and reap the intermediate parent immediately. Waiting on kwin here
+        # would either block forever or (with a timeout) kill the WM we just
+        # started — a real bug the CI container gate caught (2026-09-14).
+        ok, out = run(as_desktop(['setsid', '-f', 'kwin_x11', '--replace']), timeout=10)
+        return ok, f'kwin_x11 --replace dispatched: {out.strip()[:120]}'
     if action == 'cont-stopped':
         # SIGCONT every stopped desktop-user process; SIGSTOP is not something
         # supervisor manages, and a frozen kwin looks exactly like a dead one.
@@ -410,6 +407,7 @@ class Watchdog:
         action, wait = ladder[step_index]
         ok, detail = action_runner(action)
         self.budget.record()
+        result['repairs_in_window'] = len(self.budget.history)
         print(f'watchdog: issue={issue} action={action} ok={ok} {detail}', flush=True)
         self.episode['history'].append(f'{action}:{ok}')  # type: ignore[index]
         result['last_action'] = f'{action}:{"ok" if ok else "failed"}'

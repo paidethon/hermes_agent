@@ -264,6 +264,9 @@ def verify_kwin_selfheal() -> None:
         time.sleep(5)
     else:
         raise RuntimeError('Window manager self-heal failed: /readyz did not recover')
+    # Let any concurrent WM handover (plasma session restart vs watchdog
+    # replace) settle before demanding a stable, framing window manager.
+    time.sleep(10)
     status = watchdog_status()
     print(f'[selfheal] watchdog status: {status.strip()[:300]}', flush=True)
     verify_window_manager('after kwin kill')
