@@ -61,15 +61,28 @@
 
 ## ModelScope deployment
 
-- GitHub SHA: `aa9dde4`（PR#8 后 main；镜像 recovery-b5ab642 与之同内容，digest 差异仅为 workflow 文件层）
-- Space SHA: 由 deploy-modelscope 工作流自动产生（`deploy: sync paidethon/hermes_agent <sha>` 单一部署 commit + deploy-metadata.json）
-- deployment: `POST /deploy` 一次触发 + GET status 轮询（修复了首次运行的 digest 解析问题后重跑）
-- health/readiness: 公网 /healthz + /readyz + 受保护入口 302 行为三重验收
-- rollback: 连续 3 次验收失败 → git revert 单一部署 commit → 重部署 → 验证旧版；revert 失败则标红停机（绝不 force push）
-- 凭据: MODELSCOPE_TOKEN / SPACE_ID 来自仓库 Secrets（工作流实测读取成功）
+- GitHub SHA: `ff021849`（PR#15 后 main 尖端，= 线上 app 版本）
+- Space SHA: master HEAD = 最新 `deploy: sync paidethon/hermes_agent ff021849…` 单一部署 commit + `deploy-metadata.json`（github_sha / image_digest `da106ac5…` / hermes v2026.9.14 / studio v0.7.21 / built_at，无 Secret）
+- deployment: `POST /openapi/v1/studios/{space}/deploy` 一次触发 → GET status 轮询（`CreatingBuildingImage`→`Creating`→`Running`）
+- health/readiness: 本地可达 vantage 实测——`/healthz` 200、`/readyz` **ready:true 九探针全绿**、未认证 `/`→302 `/auth/`、`/desktop/`→302
+- rollback: 实战验证一次（由 runner 盲点误触发）：git revert 单一部署 commit → 重部署 → 全程无 force push、无数据损失；此后验证逻辑修正为「全零探测 = vantage 盲点 ≠ 服务故障」
+- 凭据: `MODELSCOPE_TOKEN`/`SPACE_ID` 来自仓库 Secrets；git 认证 = `oauth2` + token（GIT_ASKPASS，零 URL/日志暴露）
+
+### 发布流水线实战迭代记录（一夜打通，全部由各阶段守卫拦截）
+
+| # | 失败点 | 修复 |
+|---|---|---|
+| 1 | artifact digest 格式（全 RepoDigest） | 正则归一 |
+| 2 | 空间文件 API 返回 raw 文本非 JSON | request_raw 双形态 |
+| 3 | git identity 少 cwd → commit 128 | 指向空间克隆 |
+| 4 | push 报错被吞 | redacted 输出 + unshallow |
+| 5 | push 401：用户名不能是 token | `oauth2` + token（本机凭据库比对实证） |
+| 6 | `POST /api/v1/studio/…/deploy` 404 | `/openapi/v1/studios/` |
+| 7 | runner 连不上 ms.show 触发假回滚 | 全零探测 = 盲点，永不回滚 |
 
 ## Remaining issues
 
-1. **线上存量数据迁移未实测**：Hermes v0.21.x 对旧 state.db 的前向迁移只被 CI 空卷间接覆盖；首次线上部署前应跑一次 `recovery/backup.sh` 快照（回滚即恢复快照，旧版不保证读新库）。
+1. **线上存量数据迁移未实测**：Hermes v0.21.x 对旧 state.db 的前向迁移只被 CI 空卷间接覆盖；下次密码轮换/例行窗口应先跑 `recovery/backup.sh` 快照（回滚即恢复快照，旧版不保证读新库）。
 2. **Studio v0.7.21 产物膨胀 +129 MB**：需要一次上游依赖树审计（tree-shake 或换打包策略），属上游工程，未在本夜处理。
-3. **kded5 疑持久盘旧配置崩溃**（09-14 体检方向）：watchdog 不覆盖 kded5（非窗口管理职责）；若新版部署后仍复现，处置 = 清 `DATA_ROOT/home/.cache`（已在 OPERATIONS 监控项，无人值守不自动删用户数据）。
+3. **kded5 疑持久盘旧配置崩溃**（09-14 体检方向）：watchdog 不覆盖 kded5（非窗口管理职责）；若新版部署后仍复现，处置 = 清 `DATA_ROOT/home/.cache`（无人值守不自动删用户数据）。当前新版已上线约 1 小时，/readyz 全绿，待观察。
+4. **公网验收的 vantage 约束**：GitHub Actions runner 无法访问 *.ms.show（连接层失败），发布流水线在 runner 上只能验收平台状态；公网 healthz/readyz 验收需从可达 vantage 执行（本次由本地完成，已写入 OPERATIONS 约束）。

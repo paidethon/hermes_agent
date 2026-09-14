@@ -27,6 +27,18 @@ python3 /opt/recovery/health.py --once    # 容器内分层健康七项探针
 
 验收边界（哪些不在保证范围）见 `docs/recovery/VERIFICATION.md`。
 
+## 验收的网络位置约束
+
+发布流水线在 GitHub Actions runner 上只能验收**平台状态**（Running）：runner 到
+`*.ms.show` 的连接在网络层不可达（连接级失败而非 HTTP 状态），据此触发的任何
+「健康检查失败」都是盲点而非故障（发布流水线已内置该豁免）。**公网
+`/healthz`、`/readyz`、受保护入口 302 的最终验收必须从可达的 vantage 执行**
+（家用/办公网实测可达），一行快验：
+
+```bash
+curl -A 'Mozilla/5.0' https://<owner>-<space>.ms.show/readyz
+```
+
 ## 统一诊断
 
 `bash /opt/recovery/diagnose.sh`（管理员终端 root 运行；`--save` 写入
