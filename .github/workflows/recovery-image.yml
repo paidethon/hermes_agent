@@ -1,3 +1,6 @@
+# Static quality gates for the whole repository, then build → real container
+# gate → publish. Static checks are cheap and run first so a lint failure never
+# burns a 20-minute image build.
 name: recovery-image
 on:
   workflow_dispatch:
@@ -5,10 +8,13 @@ on:
     branches:
       - recovery/modelscope-cookie-auth
       - main
+      - nightly/**
     paths:
       - Dockerfile
       - recovery/**
       - tests/**
+      - scripts/**
+      - docker-compose.yml
       - .github/workflows/recovery-image.yml
 permissions:
   contents: read
@@ -17,7 +23,49 @@ concurrency:
   group: recovery-image-${{ github.ref }}
   cancel-in-progress: false
 jobs:
+  static-checks:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install test dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends python3-yaml python3-argon2
+      - name: Shell syntax + shellcheck
+        run: |
+          for f in recovery/*.sh scripts/*.sh; do bash -n "$f"; done
+          shellcheck --severity=warning recovery/*.sh scripts/*.sh
+      - name: Python syntax + unit tests + config consistency
+        run: |
+          python3 -m compileall -q recovery tests scripts
+          python3 -m unittest discover -s tests -v
+          python3 scripts/check-consistency.py
+      - name: Docs audit (broken links fail the run)
+        run: python3 scripts/docs-audit.py
+      - uses: hadolint/hadolint-action@v3.1.0
+        with:
+          dockerfile: Dockerfile
+          failure-threshold: warning
+          ignore: DL3008,DL3013
+      - name: actionlint (workflow syntax + semantics)
+        run: |
+          curl -fsSL --retry 5 \
+            https://github.com/rhysd/actionlint/releases/download/v1.7.7/actionlint_1.7.7_linux_amd64.tar.gz \
+            | tar -xz -C /usr/local/bin actionlint
+          # SC2016 is intentional here: docker Go templates and printf format
+          # strings legitimately keep $-expressions in single quotes.
+          actionlint -color -ignore 'SC2016'
+      - name: Compose file is a valid rehearsal of the production image
+        run: |
+          AUTH_PASSWORD=ci-dummy-password-0123456789 \
+          VNC_PASSWORD=ci-dummy-vnc-pass \
+          DESKTOP_PASSWORD=ci-dummy-desktop-pass-0123456789 \
+          docker compose config --quiet && echo 'compose config: OK'
   build-test-publish:
+    needs: static-checks
     runs-on: ubuntu-24.04
     timeout-minutes: 120
     steps:
@@ -38,8 +86,16 @@ jobs:
           load: true
           push: false
           provenance: false
+          build-args: |
+            SOURCE_COMMIT=${{ github.sha }}
           cache-from: type=gha,scope=hermes-recovery
           cache-to: type=gha,mode=max,scope=hermes-recovery
+      - name: Record candidate image size
+        if: always()
+        run: |
+          # shellcheck disable=SC2016
+          docker image inspect hermes-recovery:test \
+            --format 'image_size_bytes={{.Size}}' >> "$GITHUB_STEP_SUMMARY" || true
       - name: Real container gate (no LLM key required)
         run: /usr/bin/python3 tests/smoke_container.py
       - name: Login to GitHub Container Registry
@@ -54,9 +110,11 @@ jobs:
           COMMIT: ${{ github.sha }}
         run: |
           set -euo pipefail
+          # shellcheck disable=SC2016
           IMAGE="ghcr.io/${REPOSITORY,,}:recovery-${COMMIT}"
           docker tag hermes-recovery:test "$IMAGE"
           docker push "$IMAGE"
+          # shellcheck disable=SC2016
           PIN="$(docker image inspect "$IMAGE" --format '{{index .RepoDigests 0}}')"
           test -n "$PIN"
           mkdir -p deployment

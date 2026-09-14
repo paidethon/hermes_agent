@@ -20,15 +20,17 @@ file="$dest/hermes-$(date -u +%Y%m%dT%H%M%SZ).tar.gz"
 if [ -e "$file" ]; then exit 1; fi
 # Run from the platform administrative terminal, NOT from noVNC: the desktop is stopped.
 resume() {
-    "${ctl[@]}" start auth vnc desktop novnc studio health nginx >/dev/null || true
+    "${ctl[@]}" start auth vnc desktop novnc studio health nginx watchdog >/dev/null || true
 }
 trap resume EXIT
-"${ctl[@]}" stop nginx health studio novnc desktop vnc auth
+# The watchdog must be stopped FIRST: it would otherwise fight the backup by
+# restarting or repairing the services being frozen.
+"${ctl[@]}" stop watchdog nginx health studio novnc desktop vnc auth
 # Include Chrome and any independent CLI/agent processes spawned from the desktop.
 # Never snapshot live SQLite databases by copying only their .db files.
 if pgrep -u 1001 >/dev/null; then
     pkill -TERM -u 1001 || true
-    for n in $(seq 1 20); do
+    for _ in $(seq 1 20); do
         pgrep -u 1001 >/dev/null || break
         sleep 1
     done

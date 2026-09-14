@@ -48,10 +48,22 @@
 | [docs/archive/RECOVERY.md](docs/archive/RECOVERY.md) | 恢复版初版实施记录（已被上述文档取代，仅存档） |
 | `recovery/` | 恢复层实现：bootstrap / entrypoint / 桌面与 Studio 启动 / 健康检查 |
 | `tests/` | 单元 + Nginx 集成测试、真实容器冒烟验收（含 KWin 窗口管理门禁） |
-| `modelscope/`、`.env.example`、`docker-compose.yml`、`keepalive.yml` | **遗留**：原版全量架构资产，当前镜像不使用 |
+| [docker-compose.yml](docker-compose.yml) | 本地预演：与生产同一 Dockerfile，跑通 healthz/readyz/登录/桌面 |
+| `legacy/` | **遗留**：原版全量架构资产（旧 modelscope/ 实现、旧备份脚本、旧环境模板），当前镜像不使用 |
+
+## 本地预演
+
+```bash
+cp .env.recovery.example .env   # 填入必填值
+docker compose config && docker compose up --build
+curl -fsS http://127.0.0.1:7860/healthz   # liveness
+curl -fsS http://127.0.0.1:7860/readyz    # readiness（七探针）
+```
 
 ## 测试
 
 ```bash
 python -m unittest discover -s tests -v
+python scripts/docs-audit.py         # 文档断链/漂移
+python scripts/check-consistency.py  # 端口/环境变量/端点跨文件一致性
 ```

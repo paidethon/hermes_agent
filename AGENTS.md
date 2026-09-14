@@ -19,7 +19,7 @@
 | 理解"为什么这样设计" | `docs/decisions/` | — |
 | 新增环境变量 | `.env.recovery.example`（真源）+ `recovery/bootstrap.py`（校验规则） | 不要在 README 重复全表 |
 
-**遗留目录**（当前镜像不使用，勿在其中改动后误以为生效）：`modelscope/`（原版全量架构的 entrypoint/supervisord/nginx/model 脚本）、`.env.example`、`docker-compose.yml`、`.github/workflows/keepalive.yml`、`modelscope/MODEL-INTEGRATION-REPORT.md`、`docs/archive/`。
+**遗留目录**（当前镜像不使用，勿在其中改动后误以为生效）：`legacy/`（原版全量架构：`modelscope/`、`portal/`、`config/`、旧 scripts、`.env.example`）、`docs/archive/`。
 
 ## 硬约束（改架构前逐条核对）
 
@@ -33,7 +33,8 @@
 8. **模型 ID 必须带前缀**：如 `Qwen/Qwen3-235B-A22B`，缺前缀 HTTP 400。
 9. **平台 WAF** 拦截默认 curl UA，脚本探活须带浏览器 UA。
 10. **单容器不是隔离沙箱**：不要在其中保存无关高权限凭据，不要假设容器间强隔离。
-11. **桌面三道防线**：`kwin-x11` 必须显式安装（Noble 把它放在 `kde-plasma-desktop` 的 Recommends，`--no-install-recommends` 会静默漏掉）；健康检查不能只看进程存活——**plasmashell 存活 ≠ 桌面可用**，`/readyz` 必须验证 kwin 进程与 EWMH root 接管；真实容器门禁会验证窗口确实被加框（见 ADR 0003）。
+11. **桌面三道防线**：`kwin-x11` 必须显式安装（Noble 把它放在 `kde-plasma-desktop` 的 Recommends，`--no-install-recommends` 会静默漏掉）；健康检查不能只看进程存活——**plasmashell 存活 ≠ 桌面可用**，`/readyz` 必须验证 kwin 进程与 EWMH root 接管；真实容器门禁会验证窗口确实被加框（见 ADR 0003）。watchdog（`recovery/desktop-watchdog.py`）负责「活着但坏掉」的自愈，修复有预算上限、诊断留 `DATA_ROOT/diagnostics/`。
+12. **进程环境隔离**：模型密钥只进消费者程序（studio/desktop），其余 supervisor 程序显式置空（见 `bootstrap.AGENT_ENV_KEYS`）；新增程序时保持该模式，不要整段继承容器环境。
 
 ## 完成定义
 

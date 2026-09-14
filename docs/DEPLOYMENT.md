@@ -38,7 +38,39 @@ push main 或 push recovery/modelscope-cookie-auth（触及 Dockerfile / recover
 
 模型配置只在首次启动（无现存 config.yaml）时初始化；已有配置优先，切换模型用 `hermes model`，不要靠改 `HERMES_MODEL` 强行覆盖。
 
-GitHub Actions 侧另有 `MODELSCOPE_TOKEN` / `SPACE_ID`（仅遗留的 keepalive 工作流使用）。
+GitHub Actions 侧需要 `MODELSCOPE_TOKEN` / `SPACE_ID` 两个 Secrets，供发布流水线与 keepalive 使用；token 只经 `GIT_ASKPASS`/请求头进入请求，绝不写入 URL 或日志。
+
+## 自动发布流水线（deploy-modelscope）
+
+```
+push main（触及运行时路径）
+  → recovery-image：静态检查 → 单测 → 构建候选镜像 → 真实容器门禁 → 发布 GHCR
+  → deploy-modelscope（workflow_run 自动接续，仅 main、仅构建成功时）：
+      下载该次运行的 deployment artifact
+      → 空间仓库产生且仅产生一个部署 commit（digest 固定 Dockerfile + deploy-metadata.json）
+      → POST /deploy 触发一次（不用它轮询——那是重启型接口）
+      → GET status 轮询 Building→Running（无副作用）
+      → 公网 /healthz + /readyz + 受保护入口行为三重验收
+      → 连续 3 次验收失败：git revert 该部署 commit → 重新部署 → 验证旧版恢复
+      → revert 也失败：停止自动操作，工作流标红，输出需人工介入的原因
+```
+
+发布 commit 形如 `deploy: sync paidethon/hermes_agent <github-sha>`；`deploy-metadata.json`
+记录 GitHub SHA、镜像 digest、Hermes/Studio 版本钉与构建时间（无任何 Secret）。
+平台 master 有分支保护：流水线只做正常 commit + revert，**绝不 force push**。
+
+## Keepalive（每 6 小时）
+
+判断不再是单一平台状态，而是「平台状态 + HTTP 健康 + readiness」：
+
+| 观测 | 动作 |
+|---|---|
+| Running + `/readyz` 200 | 不干预 |
+| Stopped | deploy（重试上限 3） |
+| Running + readiness 连续 3 次失败 | 恢复性 deploy 一次：4 小时 cooldown + 24 小时上限 3 次（状态经 actions/cache 传递） |
+| Building / Deploying | 不干预 |
+
+readiness 探针即线上九探针聚合，因此桌面侧故障（kwin/kded5 类）与空间停止走同一条自动恢复路径。
 
 ## 密码轮换（不重建镜像）
 

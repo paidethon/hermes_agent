@@ -1,0 +1,93 @@
+# Release pipeline: GitHub main -> ModelScope Space.
+# Runs only after a successful recovery-image run on main; syncs the
+# digest-pinned Dockerfile to the space repo as ONE deployment commit, triggers
+# the deploy API, polls platform state + public health/readiness, and reverts
+# that single commit (never force push) when the release does not come up.
+name: deploy-modelscope
+on:
+  workflow_run:
+    workflows: [recovery-image]
+    types: [completed]
+    branches: [main]
+  workflow_dispatch:
+    inputs:
+      force:
+        description: 'Deploy even if the space already pins this digest'
+        type: boolean
+        default: false
+permissions:
+  contents: read
+concurrency:
+  group: deploy-modelscope
+  cancel-in-progress: false
+jobs:
+  release:
+    if: >-
+      github.event_name == 'workflow_dispatch' ||
+      github.event.workflow_run.conclusion == 'success'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # Under workflow_run the default checkout would be the branch tip;
+          # pin the exact commit the tested image was built from.
+          ref: ${{ github.event.workflow_run.head_sha || github.ref }}
+      - name: Resolve the triggering run and download its tested deployment files
+        id: artifact
+        if: github.event_name == 'workflow_run'
+        continue-on-error: true
+        uses: actions/download-artifact@v4
+        with:
+          name: modelscope-deployment
+          path: deployment
+          run-id: ${{ github.event.workflow_run.id }}
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+      - name: Guard - a workflow_run release must carry its tested artifact
+        if: github.event_name == 'workflow_run' && steps.artifact.outcome != 'success'
+        run: |
+          echo "::error::BLOCKED_BY_MISSING_ARTIFACT: the triggering recovery-image run did not provide deployment files; not deploying."
+          exit 1
+      - name: Guard - manual dispatch must provide deployment files
+        if: github.event_name == 'workflow_dispatch' && github.event.inputs.force != 'true'
+        run: |
+          if [ ! -f deployment/image-digest.txt ] || [ ! -f deployment/Dockerfile ]; then
+            echo "::error::BLOCKED_BY_MISSING_ARTIFACT: place deployment/{Dockerfile,image-digest.txt,source-commit.txt} from the recovery-image run you want to release, then dispatch with force=true."
+            exit 1
+          fi
+      - name: Release prerequisites
+        env:
+          MODELSCOPE_TOKEN: ${{ secrets.MODELSCOPE_TOKEN }}
+          SPACE_ID: ${{ secrets.SPACE_ID }}
+        run: |
+          if [ -z "${MODELSCOPE_TOKEN:-}" ] || [ -z "${SPACE_ID:-}" ]; then
+            echo "::error::BLOCKED_BY_MISSING_CREDENTIAL: need secrets MODELSCOPE_TOKEN and SPACE_ID"
+            exit 1
+          fi
+      - name: Sync the pinned Dockerfile to the space repo
+        env:
+          MODELSCOPE_TOKEN: ${{ secrets.MODELSCOPE_TOKEN }}
+          SPACE_ID: ${{ secrets.SPACE_ID }}
+          RELEASE_WORKDIR: .release
+        run: python3 scripts/modelscope_release.py sync --deploy-dir deployment --github-sha "${{ github.event.workflow_run.head_sha || github.sha }}"
+      - name: Deploy and verify (automatic single revert on failure)
+        env:
+          MODELSCOPE_TOKEN: ${{ secrets.MODELSCOPE_TOKEN }}
+          SPACE_ID: ${{ secrets.SPACE_ID }}
+          RELEASE_WORKDIR: .release
+        run: python3 scripts/modelscope_release.py deploy-and-verify
+      - name: Release summary
+        if: always()
+        run: |
+          {
+            echo '## ModelScope release'
+            if [ -f .release/space-shas.txt ]; then
+              echo "space shas (old -> new): $(cat .release/space-shas.txt)"
+            fi
+            if [ -f deployment/image-digest.txt ]; then
+              echo "image: \`sha256:$(cat deployment/image-digest.txt)\`"
+            fi
+            if [ -f deployment/source-commit.txt ]; then
+              echo "source: ${{ github.repository }}@$(cat deployment/source-commit.txt)"
+            fi
+          } >> "$GITHUB_STEP_SUMMARY"

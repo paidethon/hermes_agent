@@ -27,9 +27,10 @@ supervisord（root）编排 8 个进程；配置生成到 /run/zephyr/（tmpfs�
 | auth | zephyr-auth (1002) | 127.0.0.1:9091 | 10 | Authelia 4.39，Cookie 会话认证 |
 | vnc | hermes (1001) | 127.0.0.1:5901 | 20 | Xtigervnc `:1`，VncAuth，`-nolisten tcp` |
 | desktop | hermes | — | 30 | KDE Plasma 会话（desktop.sh：preflight 校验 + `startplasma-x11`；KWin 为窗口管理器） |
+| watchdog | root | — | 35 | `desktop-watchdog.py`：桌面自愈（KWin 替换→会话重启梯级，修复预算上限，诊断留存） |
 | novnc | hermes | 127.0.0.1:6080 | 40 | websockify，`/desktop/websockify` 校验 Origin |
 | studio | hermes | 127.0.0.1:8648 | 50 | Hermes Studio（Node 24，`dist/server/index.js`） |
-| health | hermes | — | 60 | health.py 常驻，对外暴露 `/readyz` |
+| health | hermes | 127.0.0.1:9092 | 60 | health.py 常驻，对外暴露 `/readyz` |
 | nginx | root | **0.0.0.0:7860** | 70 | 唯一入口 |
 
 Hermes Agent 本体（venv `/opt/hermes-venv`，`hermes` CLI）不在路由表中；Studio 通过 Python agent bridge（IPC）连接 Agent，不占端口。原版架构中的 Gateway API（8642）在恢复版中不启用。
@@ -38,14 +39,40 @@ Hermes Agent 本体（venv `/opt/hermes-venv`，`hermes` CLI）不在路由表�
 
 | 路径 | 行为 | 认证 |
 |---|---|---|
-| `/healthz` | 返回 `alive` | 无 |
-| `/readyz` | 转发到 health 服务，聚合就绪状态 | 无 |
+| `/healthz` | 返回 `alive`（**liveness**：入口进程活着） | 无 |
+| `/readyz` | 转发到 health 服务（**readiness**：用户真的可用），JSON 含 `checks` 九探针与 `versions` 固定版本 | 无 |
 | `/auth/` | Authelia 登录门户 | 无（本身即认证） |
-| `/` | 受保护入口页（提示桌面内打开 Studio） | Authelia |
+| `/` | 受保护入口页（状态徽章 + 提示桌面内打开 Studio） | Authelia |
 | `/desktop/`、`/desktop/websockify` | noVNC（WebSocket 校验 Origin） | Authelia |
 | 其余 | 404 | — |
 
-内部端口（9091/6080/5901/8648）均不在路由表中，公网不可达。
+内部端口（9091/9092/6080/5901/8648）均不在路由表中，公网不可达。
+
+## 九探针 readiness
+
+`/readyz` 聚合九项，任一为 false 即 503：`auth`（Authelia）、`novnc`、`studio`、
+`vnc`（5901 TCP）、`x`（xdpyinfo，X 服务器真的响应协议）、`dbus`（会话总线进程）、
+`desktop`（plasmashell）、`kwin`（kwin_x11）、`wm`（EWMH root 接管）。
+进程级存活探不出的故障由 `x`/`wm` 兜底：X 挂死时进程都在但无人能画；
+WM 死了窗口没有标题栏。
+
+## 桌面自愈（watchdog）
+
+supervisord 只重启「退出」的进程；watchdog（`recovery/desktop-watchdog.py`，root）
+处理「活着但坏掉」的状态：KWin 死亡/未接管 root、X 挂死、T（冻结）态进程、
+FATAL 程序。修复梯级每个 issue 最多走一遍：`kwin_x11 --replace`（会话内）→
+`supervisorctl restart desktop`（整会话）→ 之后只写诊断不再动手。全局修复预算
+（默认 4 次/30 分钟滚动窗口）防无限重启；诊断包（进程表/X 属性/会话变量/dbus/端口，
+无任何环境变量全量 dump）存 `DATA_ROOT/diagnostics/watchdog-*`，保留最新 10 份。
+状态文件 `/run/zephyr/watchdog-status.json`（tmpfs，无敏感值）。
+
+## 进程环境隔离
+
+supervisor 子进程默认按段继承 supervisord 全量环境。恢复版改为 per-service
+allowlist：`OPENAI_API_KEY`/`OPENAI_BASE_URL`/`HERMES_MODEL` 只进入消费者
+（studio、desktop 会话），其余程序（nginx/auth/vnc/novnc/health/dbus/watchdog）
+在配置里显式置空——任何服务崩溃转储或子进程继承都不可能带出模型密钥。
+三套密码在 entrypoint 启动服务前已 unset。
 
 ## 认证链
 
@@ -89,4 +116,4 @@ entrypoint 在生成配置后、启动服务前 `unset` 全部密码环境变量
 
 ## 明确不包含（相对原版）
 
-Open WebUI、Flowise、llama.cpp 本地推理、模型自动下载、消息渠道 Gateway 均不在恢复版镜像中。原版实现保留在 `modelscope/` 目录（遗留，不参与当前构建）与 git 历史。扩展方式见 `docs/OPERATIONS.md` 末节。
+Open WebUI、Flowise、llama.cpp 本地推理、模型自动下载、消息渠道 Gateway 均不在恢复版镜像中。原版实现保留在 `legacy/` 目录（遗留，不参与当前构建）与 git 历史。扩展方式见 `docs/OPERATIONS.md` 末节。

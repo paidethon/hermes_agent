@@ -244,24 +244,69 @@ http {{
 '''
 
 
-def render_supervisor(root: Path, geometry: str, no_sandbox: str) -> str:
-    env = (f'HOME="/home/hermes",USER="hermes",LOGNAME="hermes",DISPLAY=":1",'
-           f'XAUTHORITY="/run/user/1001/.Xauthority",XDG_RUNTIME_DIR="/run/user/1001",'
-           f'XDG_SESSION_TYPE="x11",LIBGL_ALWAYS_SOFTWARE="1",QT_X11_NO_MITSHM="1",'
-           f'KWIN_COMPOSE="N",DATA_ROOT="{root}",CHROME_NO_SANDBOX="{no_sandbox}",'
-           f'HERMES_HOME="{root}/hermes",QT_IM_MODULE="fcitx",GTK_IM_MODULE="fcitx",'
-           f'XMODIFIERS="@im=fcitx"')
-    programs = [
-        ('dbus', 'root', '/usr/bin/dbus-daemon --system --nofork --nopidfile', 5),
-        ('auth', 'zephyr-auth', '/usr/local/bin/authelia --config /run/zephyr/authelia.yml', 10),
+# Model credentials reach only the agent consumers (Studio bridge, desktop
+# terminal). Every other supervisor program gets them explicitly blanked, so a
+# bug in one service can never leak the key into its logs, crashes, or child
+# processes. Values themselves are NOT written to this config file.
+AGENT_ENV_KEYS = ('OPENAI_API_KEY', 'OPENAI_BASE_URL', 'HERMES_MODEL')
+
+
+def _quote(value: str) -> str:
+    return json.dumps(value)
+
+
+def _env_line(pairs: list[tuple[str, str]]) -> str:
+    return ','.join(f'{key}={_quote(value)}' for key, value in pairs)
+
+
+def render_supervisor(root: Path, geometry: str, no_sandbox: str,
+                      agent_env: dict[str, str] | None = None) -> str:
+    agent_env = {key: str(agent_env.get(key, '')) for key in AGENT_ENV_KEYS} \
+        if agent_env else {key: '' for key in AGENT_ENV_KEYS}
+    session = [
+        ('HOME', '/home/hermes'), ('USER', 'hermes'), ('LOGNAME', 'hermes'),
+        ('DISPLAY', ':1'),
+        ('XAUTHORITY', '/run/user/1001/.Xauthority'),
+        ('XDG_RUNTIME_DIR', '/run/user/1001'),
+        ('XDG_SESSION_TYPE', 'x11'),
+        ('LIBGL_ALWAYS_SOFTWARE', '1'), ('QT_X11_NO_MITSHM', '1'),
+        ('KWIN_COMPOSE', 'N'),
+        ('DATA_ROOT', str(root)),
+        ('HERMES_HOME', f'{root}/hermes'),
+        ('QT_IM_MODULE', 'fcitx'), ('GTK_IM_MODULE', 'fcitx'),
+        ('XMODIFIERS', '@im=fcitx'),
+    ]
+    root_env = [('HOME', '/root'), ('USER', 'root'), ('DATA_ROOT', str(root))]
+    # Consumers additionally receive the model credentials; the desktop also
+    # the Chrome sandbox toggle it re-reads at browser launch.
+    consumer_extra = [(key, agent_env[key]) for key in AGENT_ENV_KEYS]
+    blank_extra = [(key, '') for key in AGENT_ENV_KEYS]
+    desktop_extra = [('CHROME_NO_SANDBOX', no_sandbox)] + consumer_extra
+
+    def session_env() -> str:
+        return _env_line(session + blank_extra)
+
+    programs: list[tuple[str, str, str, int, str]] = [
+        ('dbus', 'root', '/usr/bin/dbus-daemon --system --nofork --nopidfile', 5,
+         _env_line(root_env + blank_extra)),
+        ('auth', 'zephyr-auth', '/usr/local/bin/authelia --config /run/zephyr/authelia.yml', 10,
+         _env_line(root_env + blank_extra)),
         ('vnc', 'hermes', '/usr/bin/Xtigervnc :1 -localhost=1 -rfbport 5901 '
          f'-geometry {geometry} -depth 24 -SecurityTypes VncAuth '
-         '-rfbauth /home/hermes/.vnc/passwd -auth /run/user/1001/.Xauthority -nolisten tcp', 20),
-        ('desktop', 'hermes', '/opt/recovery/desktop.sh', 30),
-        ('novnc', 'hermes', '/usr/bin/websockify --web=/usr/share/novnc 127.0.0.1:6080 127.0.0.1:5901', 40),
-        ('studio', 'hermes', '/opt/recovery/studio.sh', 50),
-        ('health', 'hermes', '/usr/bin/python3 /opt/recovery/health.py', 60),
-        ('nginx', 'root', '/usr/sbin/nginx -g "daemon off;" -c /run/zephyr/nginx.conf', 70),
+         '-rfbauth /home/hermes/.vnc/passwd -auth /run/user/1001/.Xauthority -nolisten tcp', 20,
+         session_env()),
+        ('desktop', 'hermes', '/opt/recovery/desktop.sh', 30,
+         _env_line(session + desktop_extra)),
+        ('watchdog', 'root', '/usr/bin/python3 /opt/recovery/desktop-watchdog.py', 35,
+         _env_line(root_env + blank_extra)),
+        ('novnc', 'hermes', '/usr/bin/websockify --web=/usr/share/novnc 127.0.0.1:6080 127.0.0.1:5901', 40,
+         session_env()),
+        ('studio', 'hermes', '/opt/recovery/studio.sh', 50,
+         _env_line(session + consumer_extra)),
+        ('health', 'hermes', '/usr/bin/python3 /opt/recovery/health.py', 60,
+         session_env()),
+        ('nginx', 'root', '/usr/sbin/nginx -g "daemon off;" -c /run/zephyr/nginx.conf', 70,
+         _env_line(root_env + blank_extra)),
     ]
     text = '''[unix_http_server]
 file=/run/zephyr/supervisor.sock
@@ -281,13 +326,13 @@ supervisor.rpcinterface_factory=supervisor.rpcinterface:make_main_rpcinterface
 [supervisorctl]
 serverurl=unix:///run/zephyr/supervisor.sock
 '''
-    for name, user, command, priority in programs:
+    for name, user, command, priority, program_env in programs:
         text += f'''
 [program:{name}]
 command={command}
 user={user}
 directory={"/home/hermes" if user == "hermes" else "/"}
-environment={env}
+environment={program_env}
 priority={priority}
 autostart=true
 autorestart=true
@@ -461,14 +506,45 @@ def main() -> None:
     initialize_model(root)
     atomic_write(RUN / 'authelia.yml', render_authelia(root, origin, host, keys), AUTH_UID, AUTH_GID)
     atomic_write(RUN / 'nginx.conf', render_nginx(origin, host, authority), 0, 0, 0o644)
-    atomic_write(RUN / 'supervisord.conf', render_supervisor(root, geometry, no_sandbox), 0, 0, 0o600)
+    agent_env = {key: os.environ.get(key, '') for key in AGENT_ENV_KEYS}
+    atomic_write(RUN / 'supervisord.conf', render_supervisor(root, geometry, no_sandbox, agent_env),
+                 0, 0, 0o600)
+    # Lightweight status page: only aggregated probe names and published
+    # versions; the values come from /readyz and never include credentials,
+    # model names, or environment values.
     page = f'''<!doctype html><html lang="en"><meta charset="utf-8"><meta name="viewport" content="width=device-width">
-<title>Hermes Desktop</title><body><main><h1>Hermes Desktop</h1>
-<p>Authenticated entry at {html.escape(origin)}.</p>
+<title>Hermes Desktop</title><style>
+body{{font-family:system-ui,sans-serif;margin:2rem auto;max-width:36rem;padding:0 1rem;color:#1c1c1c}}
+h1{{font-size:1.4rem}} ul{{list-style:none;padding:0}} li{{margin:.2rem 0}}
+.b{{display:inline-block;min-width:6.5rem;padding:.05rem .5rem;border-radius:.6rem;color:#fff;font-size:.85rem}}
+.ok{{background:#1a7f37}}.bad{{background:#b42318}}.wait{{background:#7d7d7d}}
+code{{background:#f2f2f2;padding:.1rem .3rem}} .m{{color:#555;font-size:.85rem}}
+</style><body><main><h1>Hermes Desktop</h1>
+<p id="state" class="m">Checking readiness…</p><ul id="checks"></ul>
+<p id="versions" class="m"></p>
 <p><a href="/desktop/vnc.html?autoconnect=1&amp;resize=remote&amp;path=desktop/websockify">Open KDE desktop</a></p>
 <p>In the desktop browser, open <code>http://127.0.0.1:8648</code> for Hermes Studio.</p>
-<p>The VNC password is separate from the web sign-in password. This is not multi-factor authentication.</p>
-<p><a href="/auth/">Account / sign out</a></p></main></body></html>'''
+<p class="m">The VNC password is separate from the web sign-in password.
+This is not multi-factor authentication.</p>
+<p><a href="/auth/">Account / sign out</a></p></main>
+<script>
+const LABELS={{auth:"Auth",novnc:"noVNC",studio:"Studio",vnc:"VNC",x:"X server",
+dbus:"dbus",desktop:"Desktop",kwin:"KWin",wm:"Window manager"}};
+fetch('/readyz').then(r=>r.json()).then(d=>{{
+  const el=document.getElementById('state');
+  el.textContent=d.ready?'Ready':'Starting — some components are not ready yet';
+  el.className='m';
+  const ul=document.getElementById('checks');
+  for(const [k,v] of Object.entries(d.checks||{{}})){{
+    const li=document.createElement('li');
+    li.innerHTML=`<span class="b ${{v?'ok':'wait'}}">${{v?'Ready':'Starting'}}</span> ${{LABELS[k]||k}}`;
+    ul.appendChild(li);
+  }}
+  const v=d.versions||{{}};
+  document.getElementById('versions').textContent=
+    ['build '+ (v.app||'?'),'hermes '+ (v.hermes||'?'),'studio '+ (v.studio||'?')].join(' · ');
+}}).catch(()=>{{document.getElementById('state').textContent='Unavailable';}});
+</script></body></html>'''
     atomic_write(RUN / 'www/index.html', page, 0, 0, 0o644)
     subprocess.run(['/usr/bin/dbus-uuidgen', '--ensure'], check=True)
     print('Recovery configuration generated; no legacy data has been changed.', flush=True)
