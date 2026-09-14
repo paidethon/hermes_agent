@@ -228,18 +228,21 @@ def verify_env_isolation() -> None:
     print('env isolation: agent key confined to studio + desktop session', flush=True)
 
 
-def watchdog_status(timeout: float = 150) -> str:
-    """The status file appears as soon as the watchdog process starts (it
-    writes a 'starting' phase before its grace sleep) and flips to cycle
-    results after the grace period; poll rather than assume."""
+def watchdog_status(timeout: float = 180) -> str:
+    """Poll until the watchdog has completed its first real cycle after boot
+    (the file appears immediately with a 'starting' phase, before the grace
+    sleep elapses); return the latest content, or '' on timeout."""
     deadline = time.monotonic() + timeout
+    latest = ''
     while time.monotonic() < deadline:
         result = docker('exec', NAME, '/bin/cat', '/run/zephyr/watchdog-status.json',
                         check=False, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL)
         if result.returncode == 0 and result.stdout.strip():
-            return result.stdout
+            latest = result.stdout
+            if '"healthy"' in latest:
+                return latest
         time.sleep(5)
-    return ''
+    return latest
 
 
 def verify_kwin_selfheal() -> None:
