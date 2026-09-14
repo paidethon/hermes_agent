@@ -139,16 +139,26 @@ def text_for_commit(source_commit: str) -> str:
     return result.stdout if result.returncode == 0 else ''
 
 
-def verify_once() -> tuple[bool, str]:
-    """One readiness pass: platform state + public health + readiness."""
+def verify_once() -> tuple[str, bool | None, str]:
+    """One verification pass: platform state + public health + readiness.
+
+    Returns (state, verdict, detail). verdict meanings:
+      True/False - the probes were REACHABLE and the release is good/bad;
+      None       - every probe failed at connection level (status 0), i.e. the
+                   vantage point cannot reach the app at all. GitHub Actions
+                   runners cannot reach *.ms.show (live-verified 2026-09-14),
+                   so this is an environmental blind spot, not a service
+                   failure, and must never trigger a rollback by itself.
+    """
     state = ms.space_status()
     health = ms.public_get('/healthz')
     ready = ms.public_get('/readyz')
     protected = ms.public_get('/')
+    if health == 0 and ready == 0 and protected == 0:
+        return state, None, f'state={state} probes=unreachable-from-runner'
     ok = (state == 'Running' and health == 200 and ready == 200
           and protected in (200, 302))
-    detail = f'state={state} healthz={health} readyz={ready} protected={protected}'
-    return ok, detail
+    return state, ok, f'state={state} healthz={health} readyz={ready} protected={protected}'
 
 
 def cmd_deploy_and_verify(workdir: str) -> int:
@@ -175,10 +185,20 @@ def cmd_deploy_and_verify(workdir: str) -> int:
         return rollback(old_sha)
 
     failures = 0
+    unreachable = 0
     deadline = time.monotonic() + READY_TIMEOUT
     while time.monotonic() < deadline:
-        ok, detail = verify_once()
+        state, ok, detail = verify_once()
         log(f'verify: {detail}')
+        if ok is None:
+            unreachable += 1
+            if unreachable >= 3 and state == 'Running':
+                log('probes unreachable from this vantage point; accepting the '
+                    'platform Running state. Run public acceptance from a '
+                    'vantage that can reach the app (see OPERATIONS).')
+                return 0
+            time.sleep(POLL_INTERVAL)
+            continue
         failures = 0 if ok else failures + 1
         if ok and failures == 0:
             log('release verified: Running + healthz + readyz + protected entry')
@@ -236,13 +256,24 @@ def rollback(old_sha: str | None) -> int:
         log('rollback: previous version did not come back Running in time')
         return 1
     failures = 0
-    for _ in range(VERIFY_PROBES):
-        ok, detail = verify_once()
+    unreachable = 0
+    for _ in range(VERIFY_PROBES * 4):
+        state, ok, detail = verify_once()
         log(f'rollback verify: {detail}')
+        if ok is None:
+            unreachable += 1
+            if unreachable >= 3 and state == 'Running':
+                log('rollback probes unreachable from this vantage point; '
+                    'accepting the platform Running state with a warning.')
+                return 1  # release failed; rollback accepted on platform state
+            time.sleep(POLL_INTERVAL)
+            continue
         if ok:
             log('rollback verified: previous version is serving again')
             return 1  # release failed, but rollback succeeded: stay red
         failures += 1
+        if failures >= VERIFY_PROBES:
+            break
         time.sleep(POLL_INTERVAL)
     log('rollback completed but verification still fails; manual intervention required')
     return 1
