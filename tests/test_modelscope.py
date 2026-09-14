@@ -28,20 +28,21 @@ release = load('modelscope_release', 'scripts/modelscope_release.py')
 class SpaceDockerfileParsing(unittest.TestCase):
     def test_digest_extracted_from_various_response_shapes(self):
         digest = 'a' * 64
-        for payload in (
-                {'Content': f'FROM ghcr.io/x/y@sha256:{digest}\nEXPOSE 7860\n'},
-                {'data': {'content': f'FROM ghcr.io/x/y@sha256:{digest}\n'}},
-                {'Data': {'Content': f'FROM ghcr.io/x/y@sha256:{digest}\n'}},
+        for body in (
+                f'FROM ghcr.io/x/y@sha256:{digest}\nEXPOSE 7860\n',           # raw text
+                json.dumps({'Content': f'FROM ghcr.io/x/y@sha256:{digest}\nEXPOSE 7860\n'}),
+                json.dumps({'data': {'content': f'FROM ghcr.io/x/y@sha256:{digest}\n'}}),
+                json.dumps({'Data': {'Content': f'FROM ghcr.io/x/y@sha256:{digest}\n'}}),
         ):
-            with patch.object(api, 'request', return_value=payload), \
+            with patch.object(api, 'request_raw', return_value=body), \
                     patch.dict(os.environ, {'SPACE_ID': 'owner/name',
-                                             'MODELSCOPE_TOKEN': 'ms-not-real'}):
+                                            'MODELSCOPE_TOKEN': 'ms-not-real'}):
                 self.assertEqual(api.space_dockerfile_digest(), digest)
 
     def test_unpinned_dockerfile_returns_none(self):
-        with patch.object(api, 'request', return_value={'Content': 'FROM ubuntu:24.04\n'}), \
+        with patch.object(api, 'request_raw', return_value='FROM ubuntu:24.04\n'), \
                 patch.dict(os.environ, {'SPACE_ID': 'owner/name',
-                                         'MODELSCOPE_TOKEN': 'ms-not-real'}):
+                                        'MODELSCOPE_TOKEN': 'ms-not-real'}):
             self.assertIsNone(api.space_dockerfile_digest())
 
 
