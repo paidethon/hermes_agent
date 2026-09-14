@@ -85,7 +85,7 @@ jobs:
               echo "space shas (old -> new): $(cat .release/space-shas.txt)"
             fi
             if [ -f deployment/image-digest.txt ]; then
-              echo "image: \`sha256:$(cat deployment/image-digest.txt)\`"
+              echo "image: $(cat deployment/image-digest.txt)"
             fi
             if [ -f deployment/source-commit.txt ]; then
               echo "source: ${{ github.repository }}@$(cat deployment/source-commit.txt)"
