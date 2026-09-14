@@ -63,7 +63,9 @@ def space_checkout(workroot: Path) -> Path:
     finally:
         os.environ.pop('GIT_ASKPASS', None)
         Path(askpass).unlink(missing_ok=True)
-    ms.git('config', 'user.name', 'hermes-release-bot')
+    # Both identity lines belong to the SPACE clone - the workspace checkout
+    # has its own (missing) identity, and git commit fails 128 without one.
+    ms.git('config', 'user.name', 'hermes-release-bot', cwd=str(checkout))
     ms.git('config', 'user.email', 'release-bot@users.noreply.github.com', cwd=str(checkout))
     return checkout
 
@@ -110,9 +112,12 @@ def cmd_sync(deploy_dir: str, github_sha: str, workdir: str) -> int:
     if staged.returncode == 0:
         log('space repo unchanged after sync; skipping commit')
         return 0
-    ms.git('commit', '-m',
-           f'deploy: sync paidethon/hermes_agent {github_sha or source_commit}',
-           cwd=str(checkout))
+    commit_result = ms.git('commit', '-m',
+                           f'deploy: sync paidethon/hermes_agent {github_sha or source_commit}',
+                           cwd=str(checkout), check=False)
+    if commit_result.returncode != 0:
+        # git failure text carries no credentials; keep it short regardless.
+        raise SystemExit('space repo commit failed: ' + commit_result.stdout.strip()[:200])
     askpass = ms.askpass_script()
     try:
         os.environ['GIT_ASKPASS'] = askpass
