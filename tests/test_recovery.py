@@ -44,6 +44,10 @@ spec.loader.exec_module(bootstrap)
 spec_health = importlib.util.spec_from_file_location('health', ROOT / 'recovery/health.py')
 health = importlib.util.module_from_spec(spec_health)
 spec_health.loader.exec_module(health)
+spec_watchdog = importlib.util.spec_from_file_location('watchdog',
+                                                       ROOT / 'recovery/desktop-watchdog.py')
+watchdog = importlib.util.module_from_spec(spec_watchdog)
+spec_watchdog.loader.exec_module(watchdog)
 
 
 class ConfigurationTests(unittest.TestCase):
@@ -210,11 +214,14 @@ class DesktopReadinessTests(unittest.TestCase):
             self.assertTrue(health.desktop_ok())
 
     def test_checks_gate_readiness_on_window_manager(self):
-        with patch.object(health, 'http_ok', return_value=True), \
-                patch.object(health, 'tcp_ok', return_value=True), \
+        probes = {'http_ok': True, 'tcp_ok': True, 'wm_ok': True, 'x_ok': True, 'dbus_ok': True}
+        with patch.object(health, 'http_ok', return_value=probes['http_ok']), \
+                patch.object(health, 'tcp_ok', return_value=probes['tcp_ok']), \
+                patch.object(health, 'wm_ok', return_value=probes['wm_ok']), \
+                patch.object(health, 'x_ok', return_value=probes['x_ok']), \
+                patch.object(health, 'dbus_ok', return_value=probes['dbus_ok']), \
                 patch.object(health, 'process_ok',
-                             side_effect=lambda binary: binary == 'plasmashell'), \
-                patch.object(health, 'wm_ok', return_value=True):
+                             side_effect=lambda binary: binary == 'plasmashell'):
             state = health.checks()
             self.assertTrue(state['desktop'])
             self.assertFalse(state['kwin'])
@@ -222,11 +229,26 @@ class DesktopReadinessTests(unittest.TestCase):
                              'plasmashell alive with kwin dead must not be ready')
         with patch.object(health, 'http_ok', return_value=True), \
                 patch.object(health, 'tcp_ok', return_value=True), \
-                patch.object(health, 'process_ok', return_value=True), \
-                patch.object(health, 'wm_ok', return_value=True):
+                patch.object(health, 'wm_ok', return_value=True), \
+                patch.object(health, 'x_ok', return_value=True), \
+                patch.object(health, 'dbus_ok', return_value=True), \
+                patch.object(health, 'process_ok', return_value=True):
             self.assertTrue(all(health.checks().values()))
 
-    def readyz_status(self, state: dict) -> int:
+    def test_hung_x_server_fails_probe_even_with_processes_alive(self):
+        # An X server can hang without exiting: process probes stay green while
+        # no client can draw. Only xdpyinfo answers "is X actually usable".
+        with patch.object(health, 'x_ok', return_value=False), \
+                patch.object(health, 'process_ok', return_value=True), \
+                patch.object(health, 'wm_ok', return_value=True), \
+                patch.object(health, 'http_ok', return_value=True), \
+                patch.object(health, 'tcp_ok', return_value=True), \
+                patch.object(health, 'dbus_ok', return_value=True):
+            state = health.checks()
+        self.assertFalse(state['x'])
+        self.assertFalse(all(state.values()))
+
+    def readyz_status(self, state: dict) -> tuple[int, dict]:
         server = ThreadingHTTPServer(('127.0.0.1', 0), health.Handler)
         threading.Thread(target=server.serve_forever, daemon=True).start()
         try:
@@ -236,21 +258,26 @@ class DesktopReadinessTests(unittest.TestCase):
             response = connection.getresponse()
             status, body = response.status, json.loads(response.read())
             connection.close()
-            self.assertEqual(body, {'ready': status == 200})
-            return status
+            self.assertEqual(body['ready'], status == 200)
+            self.assertEqual(body['checks'], state)
+            self.assertEqual(set(body['versions']), {'app', 'hermes', 'studio'})
+            return status, body
         finally:
             server.shutdown()
             server.server_close()
 
     def test_readyz_reports_broken_desktop_as_503(self):
         # The exact incident: taskbar fine, every window uncontrollable.
-        broken = {'auth': True, 'novnc': True, 'studio': True, 'vnc': True,
-                  'desktop': True, 'kwin': False, 'wm': False}
+        broken = {'auth': True, 'novnc': True, 'studio': True, 'vnc': True, 'x': True,
+                  'dbus': True, 'desktop': True, 'kwin': False, 'wm': False}
         with patch.object(health, 'checks', return_value=broken):
-            self.assertEqual(self.readyz_status(broken), 503)
+            status, body = self.readyz_status(broken)
+            self.assertEqual(status, 503)
+            self.assertFalse(body['checks']['wm'])
         healthy = dict(broken, kwin=True, wm=True)
         with patch.object(health, 'checks', return_value=healthy):
-            self.assertEqual(self.readyz_status(healthy), 200)
+            status, _ = self.readyz_status(healthy)
+            self.assertEqual(status, 200)
 
     def test_probe_environment_matches_supervisor_session(self):
         raw = bootstrap.render_supervisor(Path('/mnt/workspace/test-v2'), '1280x800', '0')
@@ -482,6 +509,161 @@ class NginxIntegrationTests(unittest.TestCase):
         status = self.request('/desktop/websockify', 'zephyr_session=valid', {
             'Origin': 'https://zephyr.test', 'Upgrade': 'websocket', 'Connection': 'Upgrade'})[0]
         self.assertEqual(status, 101)
+
+
+class SupervisorEnvIsolationTests(unittest.TestCase):
+    """The model key reaches only the agent consumers; every other program
+    gets it explicitly blanked instead of silently inherited."""
+
+    AGENT_ENV = {'OPENAI_API_KEY': 'sk-unit-test-not-a-real-key',
+                 'OPENAI_BASE_URL': 'https://provider.test/v1',
+                 'HERMES_MODEL': 'test/provider-model'}
+    CONSUMERS = ('studio', 'desktop')
+
+    def render(self) -> str:
+        return bootstrap.render_supervisor(Path('/mnt/workspace/test-v2'), '1280x800', '0',
+                                           dict(self.AGENT_ENV))
+
+    def sections(self, raw: str) -> dict[str, str]:
+        sections: dict[str, str] = {}
+        current = None
+        for line in raw.splitlines():
+            if line.startswith('[program:'):
+                current = line.split(':', 1)[1].rstrip(']')
+                sections[current] = ''
+            elif current is not None:
+                sections[current] += line + '\n'
+        return sections
+
+    def test_key_value_only_in_consumer_programs(self):
+        sections = self.sections(self.render())
+        for name, section in sections.items():
+            contains = 'sk-unit-test-not-a-real-key' in section
+            if name in self.CONSUMERS:
+                self.assertTrue(contains, f'{name} must carry the agent key')
+            else:
+                self.assertFalse(contains, f'{name} must not inherit the agent key')
+                self.assertIn('OPENAI_API_KEY=""', section,
+                              f'{name} must explicitly blank the key, not drop the line')
+
+    def test_special_characters_survive_supervisord_quoting(self):
+        raw = bootstrap.render_supervisor(
+            Path('/mnt/workspace/test-v2'), '1280x800', '0',
+            {'OPENAI_API_KEY': 'sk-quote"and\\backslash'})
+        self.assertIn('sk-quote\\"and\\\\backslash', raw)
+
+    def test_no_env_defaults_to_empty_consumers(self):
+        raw = bootstrap.render_supervisor(Path('/mnt/workspace/test-v2'), '1280x800', '0')
+        self.assertNotIn('sk-', raw)
+        self.assertIn('OPENAI_API_KEY=""', raw)
+
+
+class WatchdogDecisionTests(unittest.TestCase):
+    """The repair ladder must escalate once per issue and then stop for good."""
+
+    @staticmethod
+    def probes(**overrides) -> dict:
+        base = {'x': True, 'wm': True, 'plasma_state': 'S', 'kwin_state': 'S',
+                'vnc': True, 'novnc': True, 'studio': True}
+        base.update(overrides)
+        return base
+
+    @staticmethod
+    def states(**overrides) -> dict:
+        base = {name: 'RUNNING' for name in ('dbus', 'auth', 'vnc', 'desktop', 'watchdog',
+                                             'novnc', 'studio', 'health', 'nginx')}
+        base.update(overrides)
+        return base
+
+    def test_budget_blocks_after_max_and_recovers_after_window(self):
+        now = [0.0]
+        budget = watchdog.RepairBudget(maximum=2, window=100.0, clock=lambda: now[0])
+        self.assertTrue(budget.allows())
+        budget.record()
+        budget.record()
+        self.assertFalse(budget.allows())
+        now[0] = 101.0
+        self.assertTrue(budget.allows())
+
+    def test_classify_priorities_and_grace(self):
+        streaks = {'x': 0, 'vnc': 0, 'novnc': 0}
+        self.assertIsNone(watchdog.classify(self.probes(), self.states(), streaks))
+        # X down on the first observation is not yet actionable (supervisor may
+        # still be starting it); FATAL is, and so is a second consecutive miss.
+        self.assertIsNone(watchdog.classify(self.probes(x=False), self.states(), streaks))
+        streaks['x'] = 1
+        self.assertEqual(watchdog.classify(self.probes(x=False), self.states(), streaks), 'x')
+        self.assertEqual(watchdog.classify(self.probes(x=False),
+                                          self.states(vnc='FATAL'), streaks), 'x')
+        # Broken window manager outranks the rest while X is alive.
+        self.assertEqual(watchdog.classify(self.probes(wm=False), self.states(), streaks), 'wm')
+        # A frozen (T) process is actionable and distinct from absent.
+        self.assertEqual(watchdog.classify(self.probes(plasma_state='T'),
+                                          self.states(), streaks), 'stopped')
+        # FATAL support programs.
+        self.assertEqual(watchdog.classify(self.probes(), self.states(nginx='FATAL'), streaks),
+                         'fatal:nginx')
+
+    def test_wm_ladder_escalates_then_stops(self):
+        calls: list[str] = []
+        actor = WatchdogDecisionTests.make_watchdog(calls, resolves_on=None)
+        for _ in range(6):
+            actor.cycle()
+        # Exactly the ladder: replace-kwin then restart-desktop, nothing else.
+        self.assertEqual(calls, ['replace-kwin', 'restart-desktop'])
+        # And a diagnosis bundle was written exactly once.
+        self.assertEqual(actor.diagnosed, ['wm'])
+
+    def test_wm_ladder_stops_after_first_step_resolves(self):
+        calls: list[str] = []
+        actor = WatchdogDecisionTests.make_watchdog(calls, resolves_on=1)
+        actor.cycle()
+        self.assertEqual(calls, ['replace-kwin'])
+        self.assertIsNone(actor.episode)
+
+    def test_budget_exhausted_means_no_actions(self):
+        calls: list[str] = []
+        actor = WatchdogDecisionTests.make_watchdog(calls, resolves_on=None)
+        actor.budget = watchdog.RepairBudget(maximum=0, window=60.0, clock=lambda: 0.0)
+        actor.cycle()
+        self.assertEqual(calls, [])
+
+    @staticmethod
+    def make_watchdog(calls: list[str], resolves_on: int | None) -> 'watchdog.Watchdog':
+        """A watchdog whose probes always report a broken WM (kwin absent)."""
+        actor = watchdog.Watchdog(
+            budget=watchdog.RepairBudget(maximum=10, window=60.0, clock=lambda: 0.0))
+        actor.diagnosed = []
+
+        def fake_action(action: str):
+            calls.append(action)
+            return True, f'{action} dispatched'
+
+        def fake_collect(issue, probes, states, history):
+            actor.diagnosed.append(issue)
+            return None
+
+        # resolves_on=None never resolves; an int resolves after that many actions.
+        state = {'actions': 0}
+
+        def fake_wait(predicate, timeout):
+            if resolves_on is not None and state['actions'] >= resolves_on:
+                return True
+            return False
+
+        real_action = staticmethod(fake_action)
+
+        def counting_action(action: str):
+            state['actions'] += 1
+            return fake_action(action)
+
+        watchdog.probe_all = lambda: WatchdogDecisionTests.probes(kwin_state='')
+        watchdog.supervisor_states = WatchdogDecisionTests.states
+        watchdog.action_runner = counting_action
+        watchdog.wait_for = fake_wait
+        watchdog.collect_diagnostics = fake_collect
+        watchdog.STATUS_FILE = Path(tempfile.gettempdir()) / 'watchdog-test-status.json'
+        return actor
 
 
 if __name__ == '__main__':

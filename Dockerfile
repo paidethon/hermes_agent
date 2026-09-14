@@ -16,6 +16,10 @@ RUN npm ci --ignore-scripts --fetch-retries=5 \
 
 FROM ubuntu:24.04
 SHELL ["/bin/bash", "-o", "pipefail", "-c"]
+# Build pipelines pass the source commit for the status page and diagnose.sh;
+# plain local builds default to unknown.
+ARG SOURCE_COMMIT=unknown
+LABEL org.opencontainers.image.revision=${SOURCE_COMMIT}
 ENV DEBIAN_FRONTEND=noninteractive TZ=Asia/Shanghai LANG=C.UTF-8 LC_ALL=C.UTF-8
 # Do not replace Ubuntu's system Python or install agent dependencies into it.
 RUN apt-get update && apt-get install -y --no-install-recommends \
@@ -68,6 +72,7 @@ RUN useradd --uid 1001 --create-home --shell /bin/bash hermes \
     && rm -f /etc/nginx/sites-enabled/default
 ENV PATH=/opt/hermes-venv/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
 ENV DATA_ROOT=/mnt/workspace/zephyr-v2 DESKTOP_GEOMETRY=1280x800 CHROME_NO_SANDBOX=0
+RUN mkdir -p /opt/versions && printf '%s\n' "${SOURCE_COMMIT}" > /opt/versions/app.txt
 COPY recovery/ /opt/recovery/
 RUN chmod 755 /opt/recovery/*.sh \
     && ln -s /opt/recovery/browser.sh /usr/local/bin/zephyr-browser \

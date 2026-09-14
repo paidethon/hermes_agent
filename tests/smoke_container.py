@@ -25,6 +25,7 @@ ORIGIN = 'https://zephyr.test'
 PASSWORD = secrets.token_urlsafe(24)
 VNC_PASSWORD = secrets.token_hex(4)
 DESKTOP_PASSWORD = secrets.token_urlsafe(24)
+FAKE_AGENT_KEY = 'sk-ci-fake-key-not-a-real-secret'
 PORT = 17860
 
 # The X probes run as the desktop user with the session environment the
@@ -172,6 +173,86 @@ def verify_lock_does_not_kill_kwin() -> None:
     verify_window_manager('after lock/unlock')
 
 
+def verify_liveness_readiness_distinction() -> None:
+    """liveness (/healthz) answers 'is the entrypoint alive'; readiness
+    (/readyz) answers 'is a user actually served'. They must stay distinct."""
+    status, headers, body = get('/healthz')
+    assert status == 200 and body == b'alive\n', \
+        f'/healthz must be an unauthenticated liveness answer, got {status} {body!r}'
+    status, _, body = get('/readyz')
+    assert status == 200, '/readyz must be 200 once ready'
+    payload = json.loads(body)
+    assert payload['ready'] is True and all(payload['checks'].values()), \
+        f'/readyz body must carry the per-probe aggregation: {payload}'
+    assert set(payload['versions']) == {'app', 'hermes', 'studio'}, \
+        '/readyz must publish the pinned upstream commit ids'
+    # Unauthenticated access to the protected root redirects to the portal.
+    status, headers, _ = get('/')
+    location = next((v for k, v in headers if k.lower() == 'location'), '')
+    assert status == 302 and location.endswith('/auth/'), \
+        f'unauthenticated / must redirect to the portal, got {status} -> {location}'
+
+
+def verify_env_isolation() -> None:
+    """Per-service allowlist in the real container: the fake model key must be
+    present (with value) ONLY in the agent consumers, blanked everywhere else.
+
+    Other-uid environments are read as that uid: default docker caps omit
+    CAP_SYS_PTRACE, so root cannot read uid-1001 /proc/*/environ here.
+    """
+    fake = 'sk-ci-fake-key-not-a-real-secret'
+
+    def environ_of(user: str, pattern: str) -> str:
+        result = docker('exec', NAME, '/usr/sbin/gosu', user, '/bin/sh', '-c',
+                        f"tr '\\0' '\\n' < /proc/$(pgrep -u 1001 {pattern} | head -n1)/environ "
+                        '|| true', check=False, stdout=subprocess.PIPE).stdout
+        return result or ''
+
+    for program, pattern in (('studio', '-f "node dist/server/index.js"'),
+                             ('plasmashell', '-x plasmashell')):
+        env = environ_of('hermes', pattern)
+        assert f'OPENAI_API_KEY={fake}' in env, \
+            f'{program} must receive the agent key'
+    for program, pattern in (('novnc/websockify', '-f websockify'),
+                             ('health', '-f "health.py"'),
+                             ('vnc', '-x Xtigervnc')):
+        env = environ_of('hermes', pattern)
+        assert fake not in env, f'{program} must not carry the agent key value'
+        assert 'OPENAI_API_KEY=' in env, \
+            f'{program} must at least blank the key explicitly'
+    # nginx runs as root; root may read it directly.
+    nginx_env = docker('exec', NAME, '/bin/sh', '-c',
+                       "tr '\\0' '\\n' < /proc/$(pgrep -o nginx | head -n1)/environ || true",
+                       stdout=subprocess.PIPE).stdout or ''
+    assert fake not in nginx_env, 'nginx must not carry the agent key value'
+    print('env isolation: agent key confined to studio + desktop session', flush=True)
+
+
+def verify_kwin_selfheal() -> None:
+    """Kill the window manager hard and require the system to self-heal.
+
+    Either recovery path is acceptable — startplasma restarting kwin, or the
+    watchdog's `kwin_x11 --replace` / session restart ladder — but /readyz
+    must come back AND the recovered WM must actually frame windows.
+    """
+    docker('exec', NAME, '/usr/bin/pkill', '-9', '-u', '1001', '-x', 'kwin_x11',
+           stdout=subprocess.DEVNULL, check=False)
+    deadline = time.monotonic() + 300
+    while time.monotonic() < deadline:
+        try:
+            if get('/readyz')[0] == 200:
+                break
+        except (OSError, http.client.HTTPException):
+            pass
+        time.sleep(5)
+    else:
+        raise RuntimeError('Window manager self-heal failed: /readyz did not recover')
+    status = exec_out(NAME, '/bin/cat', '/run/zephyr/watchdog-status.json', check=False)
+    print(f'[{ "selfheal" }] watchdog status: {status.strip()[:300]}', flush=True)
+    verify_window_manager('after kwin kill')
+    verify_managed_window('after kwin kill')
+
+
 def kded5_stability_report() -> None:
     """Diagnostic only (goal: evidence, not attribution).
 
@@ -236,16 +317,18 @@ def websocket(cookie: str):
 def main():
     env = os.environ.copy()
     env.update({'AUTH_PASSWORD': PASSWORD, 'VNC_PASSWORD': VNC_PASSWORD,
-                'DESKTOP_PASSWORD': DESKTOP_PASSWORD})
+                'DESKTOP_PASSWORD': DESKTOP_PASSWORD, 'OPENAI_API_KEY': FAKE_AGENT_KEY})
     volume = NAME + '-data'
     try:
         docker('volume', 'create', volume, stdout=subprocess.DEVNULL)
         docker('run', '-d', '--name', NAME, '--shm-size=512m',
             '-p', f'127.0.0.1:{PORT}:7860', '-v', volume + ':/mnt/workspace',
             '-e', 'PUBLIC_ORIGIN=' + ORIGIN, '-e', 'AUTH_USERNAME=ciowner',
-            '-e', 'AUTH_PASSWORD', '-e', 'VNC_PASSWORD', '-e', 'DESKTOP_PASSWORD', IMAGE,
+            '-e', 'AUTH_PASSWORD', '-e', 'VNC_PASSWORD', '-e', 'DESKTOP_PASSWORD',
+            '-e', 'OPENAI_API_KEY', IMAGE,
             env=env, stdout=subprocess.DEVNULL)
         await_ready()
+        verify_liveness_readiness_distinction()
         verify_window_manager('cold start')
         verify_managed_window('cold start')
         shadow = docker('exec', NAME, '/bin/sh', '-c',
@@ -265,6 +348,8 @@ def main():
                '-e', 'HERMES_HOME=/mnt/workspace/zephyr-v2/hermes', NAME,
                '/opt/hermes-venv/bin/hermes', '--help', stdout=subprocess.DEVNULL)
         verify_lock_does_not_kill_kwin()
+        verify_env_isolation()
+        verify_kwin_selfheal()
         docker('exec', '-u', 'hermes', NAME, '/bin/sh', '-c',
                'printf persistence-ok > /home/hermes/recovery-sentinel.txt')
         docker('restart', '-t', '30', NAME, stdout=subprocess.DEVNULL)
@@ -276,9 +361,11 @@ def main():
         assert output == 'persistence-ok'
         cookie = login()  # In-memory login sessions intentionally expire on process restart.
         assert get('/', cookie)[0] == 200
+        status = exec_out(NAME, '/bin/cat', '/run/zephyr/watchdog-status.json', check=False)
+        assert '"healthy": true' in status, f'watchdog not healthy after restart: {status}'
         kded5_stability_report()
         print('REAL CONTAINER GATE PASSED: auth, HTTP, WebSocket, CLI, window manager, '
-              'lock/unlock, restart persistence.')
+              'lock/unlock, env isolation, kwin self-heal, restart persistence.')
         print('Not tested by this gate: pixel-level desktop rendering, paid model replies, '
               'ModelScope ingress.')
     finally:

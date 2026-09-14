@@ -38,8 +38,15 @@ jobs:
           load: true
           push: false
           provenance: false
+          build-args: |
+            SOURCE_COMMIT=${{ github.sha }}
           cache-from: type=gha,scope=hermes-recovery
           cache-to: type=gha,mode=max,scope=hermes-recovery
+      - name: Record candidate image size
+        if: always()
+        run: |
+          docker image inspect hermes-recovery:test \
+            --format 'image_size_bytes={{.Size}}' >> "$GITHUB_STEP_SUMMARY" || true
       - name: Real container gate (no LLM key required)
         run: /usr/bin/python3 tests/smoke_container.py
       - name: Login to GitHub Container Registry
