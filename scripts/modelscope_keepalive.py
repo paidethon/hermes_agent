@@ -62,22 +62,37 @@ def deploy_with_retry() -> bool:
 
 
 def readiness_failing() -> bool:
-    """VERIFY_COUNT consecutive readiness misses within this run."""
+    """VERIFY_COUNT consecutive readiness misses within this run.
+
+    A connection-level failure (status 0) is a VANTAGE blind spot, not
+    evidence about the service: GitHub Actions runners cannot reach
+    *.ms.show at all. Counting those misses as readiness failures made the
+    keepalive redeploy the space every tick and kill live user sessions
+    (2026-09-15 05:34 incident). Unreachable probes therefore never trigger
+    a recovery; only REAL HTTP statuses (e.g. 503 while Running) do.
+    """
     failures = 0
+    unreachable = 0
     for _ in range(VERIFY_COUNT):
         try:
             state = ms.space_status()
         except ms.ApiError as exc:
             log(f'status unavailable: {exc}')
             state = 'Unknown'
-        ready = ms.readiness_ok()
-        log(f'probe: state={state} readyz={"200" if ready else "fail"}')
-        if state != 'Running' or not ready:
+        status = ms.readyz_status()
+        log(f'probe: state={state} readyz={status or "unreachable"}')
+        if status == 0:
+            unreachable += 1
+        elif state != 'Running' or status != 200:
             failures += 1
         else:
             return False
-        if failures < VERIFY_COUNT:
+        if failures < VERIFY_COUNT and unreachable < VERIFY_COUNT:
             time.sleep(VERIFY_INTERVAL)
+    if unreachable >= VERIFY_COUNT:
+        log('readyz unreachable from this vantage point; trusting the '
+            'platform state and not recovering on blindness')
+        return False
     return failures >= VERIFY_COUNT
 
 

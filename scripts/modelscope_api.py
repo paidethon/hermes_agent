@@ -128,6 +128,13 @@ def readiness_ok() -> bool:
     return status == 200
 
 
+def readyz_status() -> int:
+    """Raw /readyz status: 200 ready, 503 alive-but-not-ready, 0 unreachable.
+    A 0 is a VANTAGE problem (GitHub Actions runners cannot reach *.ms.show at
+    all) and must never be read as a service failure."""
+    return public_get('/readyz')
+
+
 def space_git_url() -> str:
     owner, name = _space_id().split('/')
     return f'https://www.modelscope.cn/studios/{owner}/{name}.git'

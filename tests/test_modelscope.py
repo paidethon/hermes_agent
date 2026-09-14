@@ -62,6 +62,32 @@ class DeploymentArtifactValidation(unittest.TestCase):
                 release.load_deployment(str(deploy_dir))
 
 
+class KeepaliveBlindSpot(unittest.TestCase):
+    """Connection-level probe failures are a vantage problem, never a
+    recovery trigger (2026-09-15: blind redeploy every tick killed sessions)."""
+
+    def run_readiness(self, statuses, space='Running'):
+        calls = {'n': 0}
+        with patch.object(keepalive.ms, 'space_status', return_value=space), \
+                patch.object(keepalive.ms, 'readyz_status',
+                             side_effect=lambda: statuses[min(calls.__setitem__('n', calls['n'] + 1) or calls['n'] - 1, len(statuses) - 1)]), \
+                patch.object(keepalive.time, 'sleep'):
+            return keepalive.readiness_failing()
+
+    def test_runner_blindness_never_triggers_recovery(self):
+        self.assertFalse(self.run_readiness([0, 0, 0]))
+        self.assertFalse(self.run_readiness([0, 0, 0, 0, 0]))
+
+    def test_reachable_but_not_ready_triggers_recovery(self):
+        self.assertTrue(self.run_readiness([503, 503, 503]))
+
+    def test_reachable_and_ready_is_healthy(self):
+        self.assertFalse(self.run_readiness([200]))
+
+    def test_mixed_blind_and_single_failure_is_not_actionable(self):
+        self.assertFalse(self.run_readiness([0, 0, 503]))
+
+
 class KeepaliveState(unittest.TestCase):
     def test_state_roundtrip_and_corruption_recovery(self):
         with tempfile.TemporaryDirectory() as temp:
