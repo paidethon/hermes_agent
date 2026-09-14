@@ -61,6 +61,8 @@ RUN curl -fSL --retry 5 \
 
 ARG HERMES_REF=v2026.9.14
 # Install directly at the FINAL path; keep the editable source in the image.
+# hadolint ignore=DL3003
+# (the `cd /tmp` below is the point: prove the CLI imports from a neutral cwd)
 RUN git clone --depth 1 --branch "$HERMES_REF" https://github.com/NousResearch/hermes-agent.git /opt/hermes \
     && python3 -m venv /opt/hermes-venv \
     && /opt/hermes-venv/bin/pip install --no-cache-dir --upgrade pip setuptools wheel \
