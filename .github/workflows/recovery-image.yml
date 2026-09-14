@@ -30,6 +30,10 @@ jobs:
       contents: read
     steps:
       - uses: actions/checkout@v4
+      - name: Install test dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends python3-yaml python3-argon2
       - name: Shell syntax + shellcheck
         run: |
           for f in recovery/*.sh scripts/*.sh; do bash -n "$f"; done
