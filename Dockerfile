@@ -22,14 +22,16 @@ ARG SOURCE_COMMIT=unknown
 LABEL org.opencontainers.image.revision=${SOURCE_COMMIT}
 ENV DEBIAN_FRONTEND=noninteractive TZ=Asia/Shanghai LANG=C.UTF-8 LC_ALL=C.UTF-8
 # Do not replace Ubuntu's system Python or install agent dependencies into it.
+# build-essential exists to compile sdist dependencies during the agent install
+# below and is purged immediately afterwards; nothing compiles at runtime.
 RUN apt-get update && apt-get install -y --no-install-recommends \
     ca-certificates curl git gnupg tini nginx supervisor gosu procps \
-    python3 python3-venv python3-yaml python3-argon2 build-essential \
+    python3 python3-venv python3-yaml python3-argon2 build-essential rsync \
     kde-plasma-desktop kwin-x11 konsole dolphin kate dbus-x11 dbus-daemon \
     tigervnc-standalone-server tigervnc-tools novnc python3-websockify \
     xauth x11-utils x11-xserver-utils xterm fonts-noto-cjk \
     fcitx5 fcitx5-chinese-addons fcitx5-frontend-qt5 fcitx5-frontend-gtk3 \
-    jq rsync unzip ffmpeg rclone \
+    jq unzip \
     && rm -rf /var/lib/apt/lists/*
 # Chrome's signed repository. The browser runs as hermes, not root.
 RUN curl -fsSL https://dl.google.com/linux/linux_signing_key.pub \
@@ -38,7 +40,9 @@ RUN curl -fsSL https://dl.google.com/linux/linux_signing_key.pub \
       > /etc/apt/sources.list.d/google-chrome.list \
     && apt-get update && apt-get install -y --no-install-recommends google-chrome-stable \
     && rm -rf /var/lib/apt/lists/*
-COPY --from=studio-build /usr/local/ /usr/local/
+# Runtime needs the node binary and the built/pruned Studio tree only: npm,
+# corepack, and the rest of the build stage's /usr/local never run in prod.
+COPY --from=studio-build /usr/local/bin/node /usr/local/bin/node
 COPY --from=studio-build /opt/hermes-studio/ /opt/hermes-studio/
 COPY --from=studio-build /opt/studio-source-commit.txt /opt/versions/studio.txt
 
@@ -65,6 +69,10 @@ RUN git clone --depth 1 --branch "$HERMES_REF" https://github.com/NousResearch/h
     && /opt/hermes-venv/bin/pip freeze > /opt/versions/hermes-requirements.txt \
     && git -C /opt/hermes rev-parse HEAD > /opt/versions/hermes.txt \
     && cd /tmp && /opt/hermes-venv/bin/hermes --help >/dev/null
+# All compilation happened above (venv sdists, nothing at runtime); the
+# toolchain is ~300MB of dead weight in the serving image.
+RUN apt-get purge -y --auto-remove build-essential \
+    && rm -rf /var/lib/apt/lists/*
 RUN useradd --uid 1001 --create-home --shell /bin/bash hermes \
     && useradd --uid 1002 --system --no-create-home --shell /usr/sbin/nologin zephyr-auth \
     && mkdir -p /opt/recovery /run/dbus /var/log/supervisor /opt/home-seed/Desktop \
