@@ -40,8 +40,10 @@ def _space_id() -> str:
 
 def request(path: str, method: str = 'GET', payload: dict | None = None,
             timeout: int = 30) -> dict:
-    """Authenticated OpenAPI call. Error bodies are never printed raw (they may
-    echo request metadata); only the HTTP status is surfaced."""
+    """Authenticated OpenAPI call returning parsed JSON.
+
+    Error bodies are never printed raw (they may echo request metadata); only
+    the HTTP status is surfaced."""
     data = json.dumps(payload).encode() if payload is not None else None
     request_obj = urllib.request.Request(
         API_BASE + path, data=data, method=method,
@@ -58,6 +60,22 @@ def request(path: str, method: str = 'GET', payload: dict | None = None,
         return json.loads(body)
     except ValueError as exc:
         raise ApiError(f'ModelScope API returned non-JSON for {path}') from exc
+
+
+def request_raw(path: str, timeout: int = 30) -> str:
+    """Authenticated GET returning the body as text, whatever its shape.
+
+    The space-repo file endpoint (api/v1/studio/{space}/repo?FilePath=...)
+    serves raw file text on some deployments and JSON on others."""
+    request_obj = urllib.request.Request(
+        API_BASE + path, headers={'Authorization': 'Bearer ' + _token()})
+    try:
+        with urllib.request.urlopen(request_obj, timeout=timeout) as response:
+            return response.read().decode('utf-8', errors='replace')
+    except urllib.error.HTTPError as exc:
+        raise ApiError(f'ModelScope API returned HTTP {exc.code} for GET {path}') from exc
+    except (urllib.error.URLError, TimeoutError) as exc:
+        raise ApiError(f'ModelScope API unreachable for GET {path}: {type(exc).__name__}') from exc
 
 
 def space_status() -> str:
@@ -134,17 +152,25 @@ def git(*args: str, cwd: str | None = None, check: bool = True) -> subprocess.Co
 def space_dockerfile_digest() -> str | None:
     """Current pinned digest in the space repo Dockerfile, or None."""
     owner, name = _space_id().split('/')
-    data = request(f'/studio/{owner}/{name}/repo?FilePath=Dockerfile&Revision=master')
-    content = ''
-    for key in ('Content', 'content', 'Data', 'data'):
-        if isinstance(data, dict) and isinstance(data.get(key), str):
-            content = data[key]
-            break
-        if isinstance(data, dict) and isinstance(data.get(key), dict):
-            inner = data[key]
-            content = inner.get('content', inner.get('Content', ''))
-            if isinstance(content, str):
+    # The file endpoint may answer raw text or a JSON envelope depending on
+    # the deployment; accept both. Never print the body (harmless here, but
+    # the discipline keeps log channels one-format).
+    body = request_raw(f'/studio/{owner}/{name}/repo?FilePath=Dockerfile&Revision=master')
+    content = body
+    try:
+        data = json.loads(body)
+    except ValueError:
+        data = None
+    if isinstance(data, dict):
+        for key in ('Content', 'content', 'Data', 'data'):
+            if isinstance(data.get(key), str):
+                content = data[key]
                 break
+            if isinstance(data.get(key), dict):
+                inner = data[key]
+                content = inner.get('content', inner.get('Content', ''))
+                if isinstance(content, str):
+                    break
     for line in content.splitlines():
         line = line.strip()
         if line.startswith('FROM') and '@sha256:' in line:
