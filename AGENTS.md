@@ -19,7 +19,7 @@
 | 理解"为什么这样设计" | `docs/decisions/` | — |
 | 新增环境变量 | `.env.recovery.example`（真源）+ `recovery/bootstrap.py`（校验规则） | 不要在 README 重复全表 |
 
-**遗留目录**（当前镜像不使用，勿在其中改动后误以为生效）：`modelscope/`（原版全量架构的 entrypoint/supervisord/nginx/model 脚本）、`.env.example`、`docker-compose.yml`、`.github/workflows/keepalive.yml`、`modelscope/MODEL-INTEGRATION-REPORT.md`、`docs/archive/`。
+**遗留目录**（当前镜像不使用，勿在其中改动后误以为生效）：`legacy/`（原版全量架构：`modelscope/`、`portal/`、`config/`、旧 scripts、`.env.example`）、`docs/archive/`。
 
 ## 硬约束（改架构前逐条核对）
 

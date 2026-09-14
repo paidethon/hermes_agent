@@ -1,75 +1,49 @@
 # =============================================================================
-# Zephyr AI Desktop — docker-compose.yml
+# 恢复版架构 — 本地预演 compose
 # =============================================================================
-# 本地开发/测试用，实际部署使用 ModelScope Custom Docker
-# 用法：docker compose up --build
+# 与生产使用同一个 Dockerfile（CI 构建发布 GHCR，魔搭空间按 digest 拉取同一镜像）。
+# 用途：部署前在本地跑通「启动 → /healthz → /readyz → 登录 → 桌面」全链路。
 #
-# 维护者：海豚-容器工程师
+#   cp .env.recovery.example .env   # 填入必填值后
+#   docker compose config && docker compose up --build
+#
+# 说明：
+#   - PUBLIC_ORIGIN 只是认证 Cookie 的域，本地没有 TLS 终结，浏览器登录需要
+#     真实 HTTPS 源；自动化验收（curl + Host 覆盖）不需要。保持与
+#     tests/smoke_container.py 一致的 *.test 域名即可。
+#   - healthcheck 继承镜像内置 HEALTHCHECK（health.py --once 七探针），
+#     不在此重复定义另一套判据。
+#   - 数据落在本机 named volume 模拟平台持久盘；镜像内 DATA_ROOT 默认
+#     /mnt/workspace/zephyr-v2，不会触碰旧 zephyr 目录。
 # =============================================================================
 
 services:
-  zephyr:
+  hermes-desktop:
     build:
       context: .
       dockerfile: Dockerfile
-      args:
-        PRELOAD_QWEN3_8B: "0"
-        ENABLE_FLOWISE: "1"
-        ENABLE_ANYTHINGLLM: "0"
-        ENABLE_LLAMA_CPP: "1"
-    image: zephyr-ai-desktop:latest
-    container_name: zephyr-desktop
-
+    image: hermes-recovery:local
+    container_name: hermes-recovery
     ports:
       - "7860:7860"
-
     volumes:
-      # ModelScope 持久化路径（本地用 named volume 模拟）
-      - zephyr-data:/mnt/workspace
-      # 开发时挂载配置文件（可选）
-      # - ./modelscope/entrypoint.sh:/opt/entrypoint.sh:ro
-      # - ./modelscope/supervisord.conf:/etc/supervisor/conf.d/supervisord.conf:ro
-      # - ./modelscope/nginx/nginx.conf:/etc/nginx/nginx.conf:ro
-      # - ./modelscope/nginx/portal.conf:/etc/nginx/conf.d/portal.conf:ro
-
+      - hermes-data:/mnt/workspace
     environment:
-      # === Portal 认证 ===
-      PORTAL_USER: ${PORTAL_USER:-admin}
-      PORTAL_PASSWORD: ${PORTAL_PASSWORD:?PORTAL_PASSWORD is required}
-
-      # === VNC 桌面 ===
-      VNC_PASSWORD: ${VNC_PASSWORD:?VNC_PASSWORD is required}
-
-      # === OneDrive 备份（2026-08-09 起移除 crypt 加密层）===
-      ONEDRIVE_TOKEN: ${ONEDRIVE_TOKEN:-}
-      ONEDRIVE_DRIVE_ID: ${ONEDRIVE_DRIVE_ID:-}
-
-      # === Hermes ===
-      HERMES_API_KEY: ${HERMES_API_KEY:-}
-
-      # === ModelScope API ===
-      MODELSCOPE_API_KEY: ${MODELSCOPE_API_KEY:-}
-
-      # === 模型配置 ===
-      ENABLE_LLAMA_CPP: "1"
-      LLAMA_CPP_THREADS: "2"
-      LLAMA_CPP_CTX_SIZE: "8192"
-      OPENWEBUI_DEFAULT_MODEL: "qwen3-8b-local"
-
-      # === 可选模块 ===
-      ENABLE_FLOWISE: "1"
-      ENABLE_ANYTHINGLLM: "0"
-
-      # === Flowise 凭据（可选：留空则 entrypoint 自动生成并持久化）===
-      FLOWISE_USER: ${FLOWISE_USER:-}
-      FLOWISE_PASSWORD: ${FLOWISE_PASSWORD:-}
-
-      # === 时区 ===
-      TZ: Asia/Shanghai
-
+      # 必填：认证与访问（值规则见 .env.recovery.example / recovery/bootstrap.py）
+      PUBLIC_ORIGIN: ${PUBLIC_ORIGIN:-https://zephyr.local.test}
+      AUTH_USERNAME: ${AUTH_USERNAME:-zephyr}
+      AUTH_PASSWORD: ${AUTH_PASSWORD:?AUTH_PASSWORD is required (16-256 chars)}
+      VNC_PASSWORD: ${VNC_PASSWORD:?VNC_PASSWORD is required (8-64 printable ASCII)}
+      DESKTOP_PASSWORD: ${DESKTOP_PASSWORD:?DESKTOP_PASSWORD is required (8-256 chars)}
+      # 可选：云模型（不配置时桌面就绪但 Agent 无法回答）
+      OPENAI_BASE_URL: ${OPENAI_BASE_URL:-}
+      OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+      HERMES_MODEL: ${HERMES_MODEL:-}
+      # 桌面与数据
+      DATA_ROOT: ${DATA_ROOT:-/mnt/workspace/zephyr-v2}
+      DESKTOP_GEOMETRY: ${DESKTOP_GEOMETRY:-1280x800}
+      CHROME_NO_SANDBOX: ${CHROME_NO_SANDBOX:-0}
     restart: unless-stopped
-
-    # 资源限制（按需调整）
     deploy:
       resources:
         limits:
@@ -78,13 +52,6 @@ services:
         reservations:
           memory: 2G
 
-    healthcheck:
-      test: ["CMD", "curl", "-sf", "http://127.0.0.1:7860/health"]
-      interval: 30s
-      timeout: 10s
-      start_period: 60s
-      retries: 3
-
 volumes:
-  zephyr-data:
+  hermes-data:
     driver: local

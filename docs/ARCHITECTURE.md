@@ -29,7 +29,7 @@ supervisord（root）编排 8 个进程；配置生成到 /run/zephyr/（tmpfs�
 | desktop | hermes | — | 30 | KDE Plasma 会话（desktop.sh：preflight 校验 + `startplasma-x11`；KWin 为窗口管理器） |
 | novnc | hermes | 127.0.0.1:6080 | 40 | websockify，`/desktop/websockify` 校验 Origin |
 | studio | hermes | 127.0.0.1:8648 | 50 | Hermes Studio（Node 24，`dist/server/index.js`） |
-| health | hermes | — | 60 | health.py 常驻，对外暴露 `/readyz` |
+| health | hermes | 127.0.0.1:9092 | 60 | health.py 常驻，对外暴露 `/readyz` |
 | nginx | root | **0.0.0.0:7860** | 70 | 唯一入口 |
 
 Hermes Agent 本体（venv `/opt/hermes-venv`，`hermes` CLI）不在路由表中；Studio 通过 Python agent bridge（IPC）连接 Agent，不占端口。原版架构中的 Gateway API（8642）在恢复版中不启用。
@@ -89,4 +89,4 @@ entrypoint 在生成配置后、启动服务前 `unset` 全部密码环境变量
 
 ## 明确不包含（相对原版）
 
-Open WebUI、Flowise、llama.cpp 本地推理、模型自动下载、消息渠道 Gateway 均不在恢复版镜像中。原版实现保留在 `modelscope/` 目录（遗留，不参与当前构建）与 git 历史。扩展方式见 `docs/OPERATIONS.md` 末节。
+Open WebUI、Flowise、llama.cpp 本地推理、模型自动下载、消息渠道 Gateway 均不在恢复版镜像中。原版实现保留在 `legacy/` 目录（遗留，不参与当前构建）与 git 历史。扩展方式见 `docs/OPERATIONS.md` 末节。
