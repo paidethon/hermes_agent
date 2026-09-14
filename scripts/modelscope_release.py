@@ -47,6 +47,13 @@ def load_deployment(deploy_dir: str) -> tuple[str, str]:
     return found.group(1), source_commit
 
 
+def redact(text: str) -> str:
+    # Defense in depth: git output in this setup never carries a token (the
+    # remote URL is token-free; askpass supplies it), but keep the guarantee
+    # structural.
+    return re.sub(r'(?:ghp|gho|github_pat|ms)-?[A-Za-z0-9_-]{8,}', '[REDACTED]', text)
+
+
 def space_checkout(workroot: Path) -> Path:
     """Shallow clone of the space repo, authenticated via GIT_ASKPASS."""
     askpass = ms.askpass_script()
@@ -118,15 +125,9 @@ def cmd_sync(deploy_dir: str, github_sha: str, workdir: str) -> int:
     if commit_result.returncode != 0:
         # git failure text carries no credentials; keep it short regardless.
         raise SystemExit('space repo commit failed: ' + commit_result.stdout.strip()[:200])
-    askpass = ms.askpass_script()
-    try:
-        os.environ['GIT_ASKPASS'] = askpass
-        result = ms.git('push', 'origin', 'master', cwd=str(checkout), check=False)
-    finally:
-        os.environ.pop('GIT_ASKPASS', None)
-        Path(askpass).unlink(missing_ok=True)
-    if result.returncode != 0:
-        raise SystemExit('pushing the space repo failed; deployment NOT triggered')
+    code, output = push_space(checkout)
+    if code != 0:
+        raise SystemExit('pushing the space repo failed: ' + output.strip()[:300])
     new_sha = ms.git('rev-parse', 'HEAD', cwd=str(checkout)).stdout.strip()
     log(f'space repo: {old_sha} -> {new_sha}')
     Path(workroot / 'space-shas.txt').write_text(f'{old_sha} {new_sha}\n')
@@ -190,6 +191,21 @@ def cmd_deploy_and_verify(workdir: str) -> int:
     return rollback(old_sha)
 
 
+def push_space(checkout: Path) -> tuple[int, str]:
+    """Push master with askpass auth; unshallow first (some Gitea servers
+    refuse pushes from shallow clones). Returns (returncode, redacted output)."""
+    askpass = ms.askpass_script()
+    try:
+        os.environ['GIT_ASKPASS'] = askpass
+        ms.git('fetch', '--unshallow', 'origin', 'master',
+               cwd=str(checkout), check=False)
+        result = ms.git('push', 'origin', 'master', cwd=str(checkout), check=False)
+    finally:
+        os.environ.pop('GIT_ASKPASS', None)
+        Path(askpass).unlink(missing_ok=True)
+    return result.returncode, redact(result.stdout)
+
+
 def rollback(old_sha: str | None) -> int:
     if not old_sha:
         log('ROLLBACK IMPOSSIBLE: no previous space SHA recorded. '
@@ -199,21 +215,15 @@ def rollback(old_sha: str | None) -> int:
     checkout = workroot / 'space-repo'
     if not checkout.exists():
         checkout = space_checkout(workroot)
-        ms.git('fetch', '--depth', '20', 'origin', 'master', cwd=str(checkout))
     try:
         ms.git('revert', '--no-edit', current_deployment_commit(checkout), cwd=str(checkout))
     except SystemExit:
         log('revert failed to run; aborting without further changes')
         return 1
-    askpass = ms.askpass_script()
-    try:
-        os.environ['GIT_ASKPASS'] = askpass
-        result = ms.git('push', 'origin', 'master', cwd=str(checkout), check=False)
-    finally:
-        os.environ.pop('GIT_ASKPASS', None)
-        Path(askpass).unlink(missing_ok=True)
-    if result.returncode != 0:
+    code, output = push_space(checkout)
+    if code != 0:
         log('rollback push failed; manual intervention required')
+        log(output.strip()[:300])
         return 1
     log('rollback commit pushed; re-deploying the previous version')
     ms.trigger_deploy()
