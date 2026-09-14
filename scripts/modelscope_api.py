@@ -129,13 +129,17 @@ def space_git_url() -> str:
 
 
 def askpass_script() -> str:
-    """GIT_ASKPASS script path: answers both username and password prompts with
-    the token. The token reaches git through the environment and a 0700 temp
-    file — it never appears in remote URLs, argv, or CI logs."""
+    """GIT_ASKPASS script path. ModelScope's Gitea-style git server expects
+    the ACCOUNT NAME as the username and the token as the password (a token
+    in the username position gets 'HTTP Basic: Access denied' on push; reads
+    of a public repo never trigger the prompt at all). The account name comes
+    from MS_GIT_USERNAME (set by the caller from the SPACE_ID owner). The
+    token reaches git through the environment and a 0700 temp file — never in
+    remote URLs, argv, or CI logs."""
     import stat
     import tempfile
     path = tempfile.NamedTemporaryFile(prefix='ms-askpass-', suffix='.sh', delete=False)
-    path.write(b'#!/bin/sh\ncase "$1" in Username*) exec printf \'%s\\n\' "$MODELSCOPE_TOKEN";; '
+    path.write(b'#!/bin/sh\ncase "$1" in Username*) exec printf \'%s\\n\' "$MS_GIT_USERNAME";; '
                b'*) exec printf \'%s\\n\' "$MODELSCOPE_TOKEN";; esac\n')
     path.close()
     os.chmod(path.name, os.stat(path.name).st_mode | stat.S_IXUSR)

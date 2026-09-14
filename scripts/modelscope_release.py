@@ -194,6 +194,7 @@ def cmd_deploy_and_verify(workdir: str) -> int:
 def push_space(checkout: Path) -> tuple[int, str]:
     """Push master with askpass auth; unshallow first (some Gitea servers
     refuse pushes from shallow clones). Returns (returncode, redacted output)."""
+    os.environ.setdefault('MS_GIT_USERNAME', ms._space_id().split('/')[0])
     askpass = ms.askpass_script()
     try:
         os.environ['GIT_ASKPASS'] = askpass
