@@ -112,6 +112,7 @@ jobs:
           IMAGE="ghcr.io/${REPOSITORY,,}:recovery-${COMMIT}"
           docker tag hermes-recovery:test "$IMAGE"
           docker push "$IMAGE"
+          # shellcheck disable=SC2016  # docker Go templates need literal braces
           PIN="$(docker image inspect "$IMAGE" --format '{{index .RepoDigests 0}}')"
           test -n "$PIN"
           mkdir -p deployment
