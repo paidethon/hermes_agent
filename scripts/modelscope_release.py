@@ -16,6 +16,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import re
 import shutil
 import sys
 import time
@@ -36,11 +37,14 @@ def log(message: str) -> None:
 
 
 def load_deployment(deploy_dir: str) -> tuple[str, str]:
-    digest = (Path(deploy_dir) / 'image-digest.txt').read_text().strip()
+    raw = (Path(deploy_dir) / 'image-digest.txt').read_text().strip()
+    # The CI writes the full RepoDigest (registry/repo@sha256:...); accept any
+    # form that contains the 64-hex digest.
+    found = re.search(r'sha256:([0-9a-f]{64})', raw)
+    if not found:
+        raise SystemExit(f'deployment artifact digest malformed: {raw[:40]}')
     source_commit = (Path(deploy_dir) / 'source-commit.txt').read_text().strip()
-    if not digest.startswith('sha256:') and len(digest) != 64:
-        raise SystemExit(f'deployment artifact digest malformed: {digest[:20]}')
-    return digest, source_commit
+    return found.group(1), source_commit
 
 
 def space_checkout(workroot: Path) -> Path:
@@ -68,12 +72,12 @@ def cmd_sync(deploy_dir: str, github_sha: str, workdir: str) -> int:
     digest, source_commit = load_deployment(deploy_dir)
     pinned = Path(deploy_dir) / 'Dockerfile'
     text = pinned.read_text()
-    if f'@sha256:{digest.replace("sha256:", "")}' not in text:
+    if f'@sha256:{digest}' not in text:
         raise SystemExit('deployment Dockerfile does not match its digest file')
 
     current = ms.space_dockerfile_digest()
     log(f'space currently pins: {current or "(nothing)"}')
-    if current and current == digest.replace('sha256:', ''):
+    if current and current == digest:
         log('space already runs this digest — nothing to deploy')
         return 0
 
@@ -94,7 +98,7 @@ def cmd_sync(deploy_dir: str, github_sha: str, workdir: str) -> int:
     metadata = {
         'github_sha': github_sha or source_commit,
         'source_commit': source_commit,
-        'image_digest': 'sha256:' + digest.replace('sha256:', ''),
+        'image_digest': 'sha256:' + digest,
         'hermes_version': hermes_ref,
         'studio_version': studio_ref,
         'built_at': time.strftime('%Y-%m-%dT%H:%M:%SZ', time.gmtime()),

@@ -49,7 +49,9 @@ class DeploymentArtifactValidation(unittest.TestCase):
     def test_load_deployment_accepts_and_rejects(self):
         with tempfile.TemporaryDirectory() as temp:
             deploy_dir = Path(temp)
-            (deploy_dir / 'image-digest.txt').write_text('b' * 64 + '\n')
+            # The CI artifact stores the full RepoDigest form.
+            (deploy_dir / 'image-digest.txt').write_text(
+                'ghcr.io/paidethon/hermes_agent@sha256:' + 'b' * 64 + '\n')
             (deploy_dir / 'source-commit.txt').write_text('c' * 40 + '\n')
             digest, commit = release.load_deployment(str(deploy_dir))
             self.assertEqual(digest, 'b' * 64)
