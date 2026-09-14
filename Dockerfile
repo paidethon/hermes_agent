@@ -2,7 +2,7 @@
 # Recovery profile: KDE + Hermes + local-only Studio + cookie-authenticated noVNC.
 # Build on GitHub Actions, then deploy the resulting image by digest to ModelScope.
 FROM node:24-bookworm-slim AS studio-build
-ARG STUDIO_REF=v0.6.39
+ARG STUDIO_REF=v0.7.21
 RUN apt-get update && apt-get install -y --no-install-recommends git ca-certificates python3 make g++ \
     && rm -rf /var/lib/apt/lists/*
 RUN git clone --depth 1 --branch "$STUDIO_REF" https://github.com/EKKOLearnAI/hermes-studio.git /opt/hermes-studio
@@ -59,7 +59,7 @@ RUN curl -fSL --retry 5 \
     && authelia --version \
     && rm -rf /tmp/authelia*
 
-ARG HERMES_REF=v2026.8.3
+ARG HERMES_REF=v2026.9.14
 # Install directly at the FINAL path; keep the editable source in the image.
 RUN git clone --depth 1 --branch "$HERMES_REF" https://github.com/NousResearch/hermes-agent.git /opt/hermes \
     && python3 -m venv /opt/hermes-venv \
