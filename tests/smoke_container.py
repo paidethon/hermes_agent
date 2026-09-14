@@ -228,6 +228,20 @@ def verify_env_isolation() -> None:
     print('env isolation: agent key confined to studio + desktop session', flush=True)
 
 
+def watchdog_status(timeout: float = 150) -> str:
+    """The status file appears as soon as the watchdog process starts (it
+    writes a 'starting' phase before its grace sleep) and flips to cycle
+    results after the grace period; poll rather than assume."""
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        result = docker('exec', NAME, '/bin/cat', '/run/zephyr/watchdog-status.json',
+                        check=False, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL)
+        if result.returncode == 0 and result.stdout.strip():
+            return result.stdout
+        time.sleep(5)
+    return ''
+
+
 def verify_kwin_selfheal() -> None:
     """Kill the window manager hard and require the system to self-heal.
 
@@ -247,8 +261,8 @@ def verify_kwin_selfheal() -> None:
         time.sleep(5)
     else:
         raise RuntimeError('Window manager self-heal failed: /readyz did not recover')
-    status = exec_out(NAME, '/bin/cat', '/run/zephyr/watchdog-status.json', check=False)
-    print(f'[{ "selfheal" }] watchdog status: {status.strip()[:300]}', flush=True)
+    status = watchdog_status()
+    print(f'[selfheal] watchdog status: {status.strip()[:300]}', flush=True)
     verify_window_manager('after kwin kill')
     verify_managed_window('after kwin kill')
 
@@ -361,7 +375,7 @@ def main():
         assert output == 'persistence-ok'
         cookie = login()  # In-memory login sessions intentionally expire on process restart.
         assert get('/', cookie)[0] == 200
-        status = exec_out(NAME, '/bin/cat', '/run/zephyr/watchdog-status.json', check=False)
+        status = watchdog_status()
         assert '"healthy": true' in status, f'watchdog not healthy after restart: {status}'
         kded5_stability_report()
         print('REAL CONTAINER GATE PASSED: auth, HTTP, WebSocket, CLI, window manager, '

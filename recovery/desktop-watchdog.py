@@ -428,6 +428,10 @@ class Watchdog:
 def main() -> None:
     print(f'watchdog: starting, grace {STARTUP_GRACE:.0f}s, '
           f'budget {BUDGET_MAX}/{BUDGET_WINDOW:.0f}s', flush=True)
+    # Publish state before the grace sleep so /run/zephyr/watchdog-status.json
+    # exists (and is truthful) from the very first second of the container.
+    write_status({'phase': 'starting', 'grace_seconds': STARTUP_GRACE,
+                  'last_check': time.strftime('%Y-%m-%dT%H:%M:%SZ', time.gmtime())})
     time.sleep(STARTUP_GRACE)
     watchdog = Watchdog()
     while True:
