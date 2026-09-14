@@ -91,7 +91,7 @@ jobs:
       - name: Record candidate image size
         if: always()
         run: |
-          # shellcheck disable=SC2016  # docker Go templates need literal braces
+          # shellcheck disable=SC2016
           docker image inspect hermes-recovery:test \
             --format 'image_size_bytes={{.Size}}' >> "$GITHUB_STEP_SUMMARY" || true
       - name: Real container gate (no LLM key required)
@@ -108,11 +108,11 @@ jobs:
           COMMIT: ${{ github.sha }}
         run: |
           set -euo pipefail
-          # shellcheck disable=SC2016  # docker Go templates need literal braces
+          # shellcheck disable=SC2016
           IMAGE="ghcr.io/${REPOSITORY,,}:recovery-${COMMIT}"
           docker tag hermes-recovery:test "$IMAGE"
           docker push "$IMAGE"
-          # shellcheck disable=SC2016  # docker Go templates need literal braces
+          # shellcheck disable=SC2016
           PIN="$(docker image inspect "$IMAGE" --format '{{index .RepoDigests 0}}')"
           test -n "$PIN"
           mkdir -p deployment
