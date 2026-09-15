@@ -110,6 +110,14 @@ class ConfigurationTests(unittest.TestCase):
         vnc_section = conf.split('location /desktop/', 1)[1]
         self.assertIn('X-Studio-Token', vnc_section)
 
+    def test_vnc_blacklist_disabled_for_single_source_architecture(self):
+        # All browser VNC connections arrive from websockify on 127.0.0.1;
+        # TigerVNC's per-source blacklist would lock out the CORRECT password
+        # after a few wrong ones (ADR 0005).
+        raw = bootstrap.render_supervisor(Path('/mnt/workspace/test-v2'), '1280x800', '0')
+        vnc_section = raw.split('[program:vnc]', 1)[1].split('[program:', 1)[0]
+        self.assertIn('-BlacklistThreshold=0', vnc_section)
+
     def test_install_uses_final_path(self):
         dockerfile = (ROOT / 'Dockerfile').read_text()
         self.assertNotIn('/opt/hermes-src', dockerfile)
