@@ -239,6 +239,23 @@ http {{
             proxy_read_timeout 3600s;
             proxy_send_timeout 3600s;
         }}
+        # The platform's VNC gateway hijacks the conventional websockify route
+        # (ADR 0005); the desktop therefore connects on this alias, which
+        # rewrites to the same upstream websockify endpoint. websockify only
+        # accepts WS on its exact /websockify path, hence the rewrite here.
+        location = /desktop/stream {{
+            if ($ws_origin_ok = 0) {{ return 403; }}
+            {protected}
+            proxy_pass http://127.0.0.1:{desktop_port}/websockify;
+            proxy_http_version 1.1;
+            proxy_set_header Upgrade $http_upgrade;
+            proxy_set_header Connection $connection_upgrade;
+            proxy_set_header Host 127.0.0.1;
+            proxy_set_header Authorization "";
+            proxy_buffering off;
+            proxy_read_timeout 3600s;
+            proxy_send_timeout 3600s;
+        }}
         location /desktop/ {{
             {protected}
             proxy_pass http://127.0.0.1:{desktop_port}/;
