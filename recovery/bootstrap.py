@@ -134,10 +134,10 @@ def render_nginx(origin: str, host: str, authority: str, runtime: str = '/run/ze
     # ModelScope's edge (since 2026-09-15) refuses WebSocket upgrades that do
     # not carry an X-Studio-Token credential, without validating the value.
     # Browsers cannot set custom WS headers, so we plant a constant-value
-    # token as an HttpOnly cookie scoped to the websockify path; the browser
+    # token as an HttpOnly cookie scoped to the desktop tree; the browser
     # then sends it automatically and the upgrade passes. No secret material.
     ws_token_cookie = ("Set-Cookie \"X-Studio-Token=1; HttpOnly; Secure; "
-                       "SameSite=None; Path=/desktop/websockify\" always;")
+                       "SameSite=None; Path=/desktop/\" always;")
     protected = f'''auth_request /internal/authelia/authz;
             auth_request_set $auth_cookie $upstream_http_set_cookie;
             add_header Set-Cookie $auth_cookie always;
@@ -225,7 +225,7 @@ http {{
             root {runtime}/www;
             try_files /index.html =404;
         }}
-        location = /desktop {{ return 302 /desktop/vnc.html?autoconnect=1&resize=remote&path=desktop/websockify; }}
+        location = /desktop {{ return 302 /desktop/vnc.html?autoconnect=1&resize=remote&path=desktop/stream; }}
         location = /desktop/websockify {{
             if ($ws_origin_ok = 0) {{ return 403; }}
             {protected}
@@ -538,7 +538,7 @@ code{{background:#f2f2f2;padding:.1rem .3rem}} .m{{color:#555;font-size:.85rem}}
 </style><body><main><h1>Hermes Desktop</h1>
 <p id="state" class="m">Checking readiness…</p><ul id="checks"></ul>
 <p id="versions" class="m"></p>
-<p><a href="/desktop/vnc.html?autoconnect=1&amp;resize=remote&amp;path=desktop/websockify">Open KDE desktop</a></p>
+<p><a href="/desktop/vnc.html?autoconnect=1&amp;resize=remote&amp;path=desktop/stream">Open KDE desktop</a></p>
 <p>In the desktop browser, open <code>http://127.0.0.1:8648</code> for Hermes Studio.</p>
 <p class="m">The VNC password is separate from the web sign-in password.
 This is not multi-factor authentication.</p>

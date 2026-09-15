@@ -99,13 +99,13 @@ class ConfigurationTests(unittest.TestCase):
             # as_posix(): Git Bash on Windows mangles backslash arguments.
             subprocess.run([BASH, '-n', path.as_posix()], check=True)
 
-    def test_websocket_edge_token_cookie_rendered(self):
+    def test_desktop_uses_bypass_ws_path_and_edge_token_cookie(self):
         # ModelScope's edge refuses tokenless WebSocket upgrades (2026-09-15)
         # without validating the token value; the browser cannot set custom WS
         # headers, so nginx must plant the constant-value HttpOnly cookie.
         conf = bootstrap.render_nginx('https://zephyr.test', 'zephyr.test', 'zephyr.test')
         self.assertIn('Set-Cookie "X-Studio-Token=1; HttpOnly; Secure; '
-                      "SameSite=None; Path=/desktop/websockify\" always;", conf)
+                      "SameSite=None; Path=/desktop/\" always;", conf)
         # The noVNC page response must be the one that plants it.
         vnc_section = conf.split('location /desktop/', 1)[1]
         self.assertIn('X-Studio-Token', vnc_section)
