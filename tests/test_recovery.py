@@ -110,18 +110,18 @@ class ConfigurationTests(unittest.TestCase):
         vnc_section = conf.split('location /desktop/', 1)[1]
         self.assertIn('X-Studio-Token', vnc_section)
 
-    def test_loopback_vnc_unauthenticated_for_platform_gateway(self):
-        # The platform's VNC gateway (X-Studio-Token, ADR 0005) cannot know the
-        # space's VNC password, so VncAuth locks out every user via the
-        # gateway's own blacklist. The loopback VNC runs unauthenticated;
-        # browser auth stays platform login + Authelia.
+    def test_vnc_auth_on_the_bypass_path(self):
+        # The desktop WS uses the /desktop/stream bypass (the gateway only
+        # hijacks the conventional websockify route), so plain VncAuth works
+        # again: the only clients on this path are Authelia-authenticated
+        # browsers; the VNC password gates the session (ADR 0005).
         raw = bootstrap.render_supervisor(Path('/mnt/workspace/test-v2'), '1280x800', '0')
         vnc_section = raw.split('[program:vnc]', 1)[1].split('[program:', 1)[0]
-        self.assertIn('-SecurityTypes None', vnc_section)
+        self.assertIn('-SecurityTypes VncAuth', vnc_section)
+        self.assertIn('-rfbauth /home/hermes/.vnc/passwd', vnc_section)
         self.assertIn('-localhost=1', vnc_section)
         self.assertIn('-nolisten tcp', vnc_section)
-        self.assertNotIn('VncAuth', vnc_section)
-        self.assertNotIn('rfbauth', vnc_section)
+        self.assertNotIn('BlacklistThreshold', vnc_section)
 
     def test_desktop_stream_alias_rewrites_to_websockify(self):
         # The platform gateway hijacks the conventional websockify route; the
