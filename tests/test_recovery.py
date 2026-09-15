@@ -283,7 +283,7 @@ class DesktopReadinessTests(unittest.TestCase):
             self.assertEqual(body['ready'], status == 200)
             self.assertEqual(body['checks'], state)
             self.assertEqual(set(body['versions']),
-                             {'app', 'hermes', 'studio', 'vncCmd'})
+                             {'app', 'hermes', 'studio', 'vncCmd', 'vncDiag'})
             return status, body
         finally:
             server.shutdown()

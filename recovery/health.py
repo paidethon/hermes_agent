@@ -103,7 +103,15 @@ def _read_vnc_cmd() -> str:
         return '?'
 
 
+def _read_vnc_diag() -> str:
+    try:
+        return (Path('/run/zephyr/diag-vnc.txt').read_text().strip())[:600]
+    except OSError:
+        return '?'
+
+
 VERSIONS['vncCmd'] = _read_vnc_cmd()
+VERSIONS['vncDiag'] = _read_vnc_diag()
 
 
 def checks() -> dict[str, bool]:
