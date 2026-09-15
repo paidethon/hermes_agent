@@ -110,18 +110,18 @@ class ConfigurationTests(unittest.TestCase):
         vnc_section = conf.split('location /desktop/', 1)[1]
         self.assertIn('X-Studio-Token', vnc_section)
 
-    def test_vnc_auth_with_blacklist_fully_disabled(self):
-        # Every browser VNC connection arrives from websockify on 127.0.0.1;
-        # a per-source blacklist then locks out the CORRECT password too
-        # ("Too many security failures", ADR 0005). Both blacklist knobs are
-        # pinned to zero and the effective command is published via /readyz.
+    def test_loopback_vnc_unauthenticated_for_platform_gateway(self):
+        # The platform's VNC gateway (X-Studio-Token, ADR 0005) cannot know the
+        # space's VNC password, so VncAuth locks out every user via the
+        # gateway's own blacklist. The loopback VNC runs unauthenticated;
+        # browser auth stays platform login + Authelia.
         raw = bootstrap.render_supervisor(Path('/mnt/workspace/test-v2'), '1280x800', '0')
         vnc_section = raw.split('[program:vnc]', 1)[1].split('[program:', 1)[0]
         self.assertIn('-SecurityTypes None', vnc_section)
         self.assertIn('-localhost=1', vnc_section)
         self.assertIn('-nolisten tcp', vnc_section)
-        self.assertIn('-BlacklistThreshold=0', vnc_section)
-        self.assertIn('-BlacklistTimeout=0', vnc_section)
+        self.assertNotIn('VncAuth', vnc_section)
+        self.assertNotIn('rfbauth', vnc_section)
 
     def test_install_uses_final_path(self):
         dockerfile = (ROOT / 'Dockerfile').read_text()
