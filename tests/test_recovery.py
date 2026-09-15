@@ -110,13 +110,18 @@ class ConfigurationTests(unittest.TestCase):
         vnc_section = conf.split('location /desktop/', 1)[1]
         self.assertIn('X-Studio-Token', vnc_section)
 
-    def test_vnc_blacklist_disabled_for_single_source_architecture(self):
+    def test_loopback_vnc_has_no_auth_and_no_blacklist_surface(self):
         # All browser VNC connections arrive from websockify on 127.0.0.1;
-        # TigerVNC's per-source blacklist would lock out the CORRECT password
-        # after a few wrong ones (ADR 0005).
+        # any per-source auth-failure blacklist then locks out the CORRECT
+        # password too ("Too many security failures", ADR 0005). The loopback
+        # VNC therefore runs unauthenticated behind the Authelia gate.
         raw = bootstrap.render_supervisor(Path('/mnt/workspace/test-v2'), '1280x800', '0')
         vnc_section = raw.split('[program:vnc]', 1)[1].split('[program:', 1)[0]
-        self.assertIn('-BlacklistThreshold=0', vnc_section)
+        self.assertIn('-SecurityTypes None', vnc_section)
+        self.assertIn('-localhost=1', vnc_section)
+        self.assertIn('-nolisten tcp', vnc_section)
+        self.assertNotIn('VncAuth', vnc_section)
+        self.assertNotIn('BlacklistThreshold', vnc_section)
 
     def test_install_uses_final_path(self):
         dockerfile = (ROOT / 'Dockerfile').read_text()
