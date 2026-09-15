@@ -131,12 +131,20 @@ def render_nginx(origin: str, host: str, authority: str, runtime: str = '/run/ze
     # restricted to ModelScope origins instead of denied outright.
     frame_csp = ("Content-Security-Policy \"frame-ancestors 'self' "
                  "https://www.modelscope.cn https://modelscope.cn\" always;")
+    # ModelScope's edge (since 2026-09-15) refuses WebSocket upgrades that do
+    # not carry an X-Studio-Token credential, without validating the value.
+    # Browsers cannot set custom WS headers, so we plant a constant-value
+    # token as an HttpOnly cookie scoped to the websockify path; the browser
+    # then sends it automatically and the upgrade passes. No secret material.
+    ws_token_cookie = ("Set-Cookie \"X-Studio-Token=1; HttpOnly; Secure; "
+                       "SameSite=None; Path=/desktop/websockify\" always;")
     protected = f'''auth_request /internal/authelia/authz;
             auth_request_set $auth_cookie $upstream_http_set_cookie;
             add_header Set-Cookie $auth_cookie always;
             add_header {frame_csp}
             add_header X-Content-Type-Options nosniff always;
             add_header Referrer-Policy no-referrer always;
+            add_header {ws_token_cookie}
             error_page 401 = @login;'''
     forwarded = f'''proxy_set_header Host {authority};
             proxy_set_header X-Forwarded-Host {authority};
