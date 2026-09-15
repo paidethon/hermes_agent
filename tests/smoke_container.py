@@ -184,8 +184,10 @@ def verify_liveness_readiness_distinction() -> None:
     payload = json.loads(body)
     assert payload['ready'] is True and all(payload['checks'].values()), \
         f'/readyz body must carry the per-probe aggregation: {payload}'
-    assert set(payload['versions']) == {'app', 'hermes', 'studio'}, \
+    assert {'app', 'hermes', 'studio'} <= set(payload['versions']), \
         '/readyz must publish the pinned upstream commit ids'
+    assert 'Xtigervnc' in payload['versions'].get('vncCmd', ''), \
+        '/readyz must publish the effective VNC command for remote diagnosis'
     # Unauthenticated access to the protected root redirects to the portal.
     status, headers, _ = get('/')
     location = next((v for k, v in headers if k.lower() == 'location'), '')
