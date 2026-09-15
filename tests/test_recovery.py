@@ -123,6 +123,16 @@ class ConfigurationTests(unittest.TestCase):
         self.assertNotIn('VncAuth', vnc_section)
         self.assertNotIn('rfbauth', vnc_section)
 
+    def test_desktop_stream_alias_rewrites_to_websockify(self):
+        # The platform gateway hijacks the conventional websockify route; the
+        # desktop connects on /desktop/stream, which must rewrite to the same
+        # upstream websockify endpoint (websockify only accepts WS there).
+        conf = bootstrap.render_nginx('https://zephyr.test', 'zephyr.test', 'zephyr.test')
+        stream = conf.split('location = /desktop/stream', 1)[1].split('\n        }', 1)[0]
+        self.assertIn('proxy_pass http://127.0.0.1:6080/websockify;', stream)
+        self.assertIn('proxy_set_header Upgrade $http_upgrade;', stream)
+        self.assertIn('auth_request /internal/authelia/authz;', stream)
+
     def test_install_uses_final_path(self):
         dockerfile = (ROOT / 'Dockerfile').read_text()
         self.assertNotIn('/opt/hermes-src', dockerfile)
