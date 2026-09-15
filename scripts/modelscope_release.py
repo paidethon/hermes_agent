@@ -26,7 +26,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 import modelscope_api as ms  # noqa: E402
 
 POLL_INTERVAL = 30
-BUILD_TIMEOUT = 25 * 60       # platform build (image pull) budget
+BUILD_TIMEOUT = 40 * 60       # platform build (image pull) budget - a cold pull exceeded 25 min on 2026-09-14
 READY_TIMEOUT = 8 * 60        # readiness probes after Running
 READY_FAILURES_FOR_ROLLBACK = 3
 VERIFY_PROBES = 3
