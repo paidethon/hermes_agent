@@ -19,6 +19,19 @@
 结论：**平台侧变更/故障**，影响所有经浏览器访问 noVNC 的创空间；容器侧
 任何配置都无法修复（拦截发生在 nginx 之前）。
 
+### 绕行尝试的最终排除（2026-09-15 深夜）
+
+| 尝试 | 结果 |
+|---|---|
+| 换路径 `/desktop/stream`（nginx 改写到 websockify） | 仍被拦截（101 后收到平台代理的横幅/拒绝） |
+| 根命名空间 `/vnc-stream` | 同样被拦截——**网关按「指向创空间应用的 WS 升级」拦截，与路径无关** |
+| 容器 VNC 配置三变（VncAuth / 双零参数 / None） | 拒绝行为不变（请求根本到不了容器） |
+| 附带发现：Noble 构建 `SecurityTypes None` 不可用 | 广告空安全类型列表（连接必死），已回退 VncAuth |
+
+最终容器形态：`/desktop/stream` 与 `/vnc-stream` 两个别名并存（均改写到
+websockify，Authelia 门禁），VNC 为 `VncAuth`。平台网关恢复透传后两个路径
+都可用；noVNC 需输 VNC 密码（Secret `VNC_PASSWORD`，前 8 位生效）。
+
 ## 期间落地的容器侧加固（独立有效，保留）
 
 - keepalive 盲点修复（PR#17）：runner 连不上 ms.show 不再触发恢复性重部署。
