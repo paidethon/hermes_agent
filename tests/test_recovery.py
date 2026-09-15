@@ -120,6 +120,8 @@ class ConfigurationTests(unittest.TestCase):
         self.assertIn('-SecurityTypes VncAuth', vnc_section)
         self.assertIn('-localhost=1', vnc_section)
         self.assertIn('-nolisten tcp', vnc_section)
+        self.assertIn('-BlacklistThreshold=0', vnc_section)
+        self.assertIn('-BlacklistTimeout=0', vnc_section)
 
     def test_install_uses_final_path(self):
         dockerfile = (ROOT / 'Dockerfile').read_text()
