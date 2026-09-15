@@ -20,7 +20,7 @@ python3 /opt/recovery/health.py --once    # 容器内分层健康七项探针
 ## 验收流程
 
 1. **免进容器快验**：浏览器打开应用的 `/readyz`，应返回 `{"ready": true}`；
-2. **三层密码实测**：Authelia 表单登录 → VNC 密码进桌面 → 桌面空闲锁屏后用 `DESKTOP_PASSWORD` 解锁；
+2. **密码实测**：Authelia 表单登录 → 直接进桌面（回环 VNC 无认证，ADR 0005）→ 桌面空闲锁屏后用 `DESKTOP_PASSWORD` 解锁；
 3. **桌面可管理**：打开 Konsole 等窗口，确认有标题栏，且拖动、最大化、还原、最小化、关闭全部可用；锁屏解锁后与重部署后再各验证一遍（KWin 必须存活，见 ADR 0003）；
 4. **容器内功能**：`hermes --help` 正常；`python3 /opt/recovery/model_probe.py` 确认云 API 连通（`--chat` 会真实消耗额度，手工执行）；让 Agent 在 `DATA_ROOT/work` 下写读一个测试文件，验证真实工具执行；
 5. **持久化**：文件写入 `/mnt/workspace` 后重部署，确认仍在；重启后浏览器会话、模型配置可恢复。

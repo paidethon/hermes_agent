@@ -76,12 +76,12 @@ allowlist：`OPENAI_API_KEY`/`OPENAI_BASE_URL`/`HERMES_MODEL` 只进入消费者
 
 ## 认证链
 
-三层密码相互独立，**不构成双因素认证**：
+密码层（2026-09-15 起 VNC 层并入 Authelia 门，见 ADR 0005）：
 
 | 层 | 验证什么 | 存储位置 | 注入方式 |
 |---|---|---|---|
 | AUTH | 网页登录（Authelia Cookie） | `DATA_ROOT/auth/users.yml`（argon2 哈希，uid 1002 私有） | 环境变量 `AUTH_PASSWORD`，启动时与存量哈希比对，不一致才重写 |
-| VNC | 桌面连接 | `DATA_ROOT/home/.vnc/passwd` | 环境变量 `VNC_PASSWORD`，启动时 `tigervncpasswd` 重写；协议只取前 8 位 |
+| VNC | ~~桌面连接~~ 已并入第二道门（2026-09-15） | —（`VNC_PASSWORD` 保留但不再消费） | 回环 VNC 改 `SecurityTypes None`（仅 127.0.0.1，浏览器路径由 Authelia 把守），见 ADR 0005 |
 | 桌面锁屏 | 会话内解锁 | `/etc/shadow`（容器可写层，不持久） | 环境变量 `DESKTOP_PASSWORD`，每次启动 `chpasswd` 写入 |
 
 会话 Cookie：`Secure` + `SameSite=None`（适配魔搭 iframe 嵌入）；30 分钟不活动过期、12 小时绝对过期。

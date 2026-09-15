@@ -29,7 +29,7 @@ push main 或 push recovery/modelscope-cookie-auth（触及 Dockerfile / recover
 | `DATA_ROOT` | 默认 | `/mnt/workspace` 下的单层目录名；保持 `zephyr-v2`，不要指回旧 `zephyr` |
 | `AUTH_USERNAME` | 默认 `zephyr` | 小写标识符，1-32 字符 |
 | `AUTH_PASSWORD` | 首启必填 | 16-256 字符，无控制字符；仅存 argon2 哈希 |
-| `VNC_PASSWORD` | 首启必填 | 8-64 可打印 ASCII；协议只取前 8 位；不要与其他密码相同 |
+| `VNC_PASSWORD` | 保留 | 当前回环 VNC 为 `SecurityTypes None`（ADR 0005），此变量暂不生效；保留以便回退 |
 | `DESKTOP_PASSWORD` | ✅ | 8-256 字符，无控制字符；每次启动重写，用于解锁 KDE 锁屏 |
 | `OPENAI_BASE_URL` | 可选 | OpenAI 兼容 HTTPS 端点 |
 | `OPENAI_API_KEY` | 可选 | 对应供应商密钥；未配置时界面就绪但 Agent 无法回答 |
