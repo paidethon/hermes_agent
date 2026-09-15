@@ -307,6 +307,8 @@ def render_supervisor(root: Path, geometry: str, no_sandbox: str,
          _env_line(session + desktop_extra)),
         ('watchdog', 'root', '/usr/bin/python3 /opt/recovery/desktop-watchdog.py', 35,
          _env_line(root_env + blank_extra)),
+        ('vnc-diag', 'root', '/opt/recovery/vnc-diag.sh', 36,
+         _env_line(root_env + blank_extra)),
         ('novnc', 'hermes', '/usr/bin/websockify --web=/usr/share/novnc 127.0.0.1:6080 127.0.0.1:5901', 40,
          session_env()),
         ('studio', 'hermes', '/opt/recovery/studio.sh', 50,
@@ -522,6 +524,7 @@ def main() -> None:
     vnc_cmd = next(line.split('command=', 1)[1] for line in supervisor_conf.splitlines()
                    if line.startswith('command=/usr/bin/Xtigervnc'))
     atomic_write(RUN / 'vnc-cmd.txt', vnc_cmd + chr(10), 0, 0, 0o644)
+    atomic_write(RUN / 'diag-vnc.txt', 'collecting...\n', 0, 0, 0o644)
     # Lightweight status page: only aggregated probe names and published
     # versions; the values come from /readyz and never include credentials,
     # model names, or environment values.
