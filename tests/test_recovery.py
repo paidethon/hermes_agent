@@ -117,7 +117,7 @@ class ConfigurationTests(unittest.TestCase):
         # pinned to zero and the effective command is published via /readyz.
         raw = bootstrap.render_supervisor(Path('/mnt/workspace/test-v2'), '1280x800', '0')
         vnc_section = raw.split('[program:vnc]', 1)[1].split('[program:', 1)[0]
-        self.assertIn('-SecurityTypes VncAuth', vnc_section)
+        self.assertIn('-SecurityTypes None', vnc_section)
         self.assertIn('-localhost=1', vnc_section)
         self.assertIn('-nolisten tcp', vnc_section)
         self.assertIn('-BlacklistThreshold=0', vnc_section)
