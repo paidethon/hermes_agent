@@ -300,8 +300,9 @@ def render_supervisor(root: Path, geometry: str, no_sandbox: str,
         ('auth', 'zephyr-auth', '/usr/local/bin/authelia --config /run/zephyr/authelia.yml', 10,
          _env_line(root_env + blank_extra)),
         ('vnc', 'hermes', '/usr/bin/Xtigervnc :1 -localhost=1 -rfbport 5901 '
-         f'-geometry {geometry} -depth 24 -SecurityTypes None '
-         '-auth /run/user/1001/.Xauthority -nolisten tcp', 20,
+         f'-geometry {geometry} -depth 24 -SecurityTypes VncAuth '
+         '-rfbauth /home/hermes/.vnc/passwd -auth /run/user/1001/.Xauthority -nolisten tcp '
+         '-BlacklistThreshold=0 -BlacklistTimeout=0', 20,
          session_env()),
         ('desktop', 'hermes', '/opt/recovery/desktop.sh', 30,
          _env_line(session + desktop_extra)),
@@ -515,8 +516,13 @@ def main() -> None:
     atomic_write(RUN / 'authelia.yml', render_authelia(root, origin, host, keys), AUTH_UID, AUTH_GID)
     atomic_write(RUN / 'nginx.conf', render_nginx(origin, host, authority), 0, 0, 0o644)
     agent_env = {key: os.environ.get(key, '') for key in AGENT_ENV_KEYS}
-    atomic_write(RUN / 'supervisord.conf', render_supervisor(root, geometry, no_sandbox, agent_env),
-                 0, 0, 0o600)
+    supervisor_conf = render_supervisor(root, geometry, no_sandbox, agent_env)
+    atomic_write(RUN / 'supervisord.conf', supervisor_conf, 0, 0, 0o600)
+    # Remote-diagnosability: the effective VNC command line (no secrets in it)
+    # is served through /readyz so a tunnel probe can verify what is running.
+    vnc_cmd = next(line.split('command=', 1)[1] for line in supervisor_conf.splitlines()
+                   if line.startswith('command=/usr/bin/Xtigervnc'))
+    atomic_write(RUN / 'vnc-cmd.txt', vnc_cmd + chr(10), 0, 0, 0o644)
     # Lightweight status page: only aggregated probe names and published
     # versions; the values come from /readyz and never include credentials,
     # model names, or environment values.

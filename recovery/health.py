@@ -96,6 +96,16 @@ VERSIONS = {'app': _read_version('app.txt'), 'hermes': _read_version('hermes.txt
             'studio': _read_version('studio.txt')}
 
 
+def _read_vnc_cmd() -> str:
+    try:
+        return (Path('/run/zephyr/vnc-cmd.txt').read_text().strip())[:160]
+    except OSError:
+        return '?'
+
+
+VERSIONS['vncCmd'] = _read_vnc_cmd()
+
+
 def checks() -> dict[str, bool]:
     probes = {
         'auth': lambda: http_ok('http://127.0.0.1:9091/auth/api/health'),

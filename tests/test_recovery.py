@@ -110,18 +110,18 @@ class ConfigurationTests(unittest.TestCase):
         vnc_section = conf.split('location /desktop/', 1)[1]
         self.assertIn('X-Studio-Token', vnc_section)
 
-    def test_loopback_vnc_has_no_auth_and_no_blacklist_surface(self):
-        # All browser VNC connections arrive from websockify on 127.0.0.1;
-        # any per-source auth-failure blacklist then locks out the CORRECT
-        # password too ("Too many security failures", ADR 0005). The loopback
-        # VNC therefore runs unauthenticated behind the Authelia gate.
+    def test_vnc_auth_with_blacklist_fully_disabled(self):
+        # Every browser VNC connection arrives from websockify on 127.0.0.1;
+        # a per-source blacklist then locks out the CORRECT password too
+        # ("Too many security failures", ADR 0005). Both blacklist knobs are
+        # pinned to zero and the effective command is published via /readyz.
         raw = bootstrap.render_supervisor(Path('/mnt/workspace/test-v2'), '1280x800', '0')
         vnc_section = raw.split('[program:vnc]', 1)[1].split('[program:', 1)[0]
-        self.assertIn('-SecurityTypes None', vnc_section)
+        self.assertIn('-SecurityTypes VncAuth', vnc_section)
         self.assertIn('-localhost=1', vnc_section)
         self.assertIn('-nolisten tcp', vnc_section)
-        self.assertNotIn('VncAuth', vnc_section)
-        self.assertNotIn('BlacklistThreshold', vnc_section)
+        self.assertIn('-BlacklistThreshold=0', vnc_section)
+        self.assertIn('-BlacklistTimeout=0', vnc_section)
 
     def test_install_uses_final_path(self):
         dockerfile = (ROOT / 'Dockerfile').read_text()
@@ -284,7 +284,8 @@ class DesktopReadinessTests(unittest.TestCase):
             connection.close()
             self.assertEqual(body['ready'], status == 200)
             self.assertEqual(body['checks'], state)
-            self.assertEqual(set(body['versions']), {'app', 'hermes', 'studio'})
+            self.assertEqual(set(body['versions']),
+                             {'app', 'hermes', 'studio', 'vncCmd'})
             return status, body
         finally:
             server.shutdown()
