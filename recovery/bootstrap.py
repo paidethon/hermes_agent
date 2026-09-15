@@ -225,7 +225,7 @@ http {{
             root {runtime}/www;
             try_files /index.html =404;
         }}
-        location = /desktop {{ return 302 /desktop/vnc.html?autoconnect=1&resize=remote&path=desktop/stream; }}
+        location = /desktop {{ return 302 /desktop/vnc.html?autoconnect=1&resize=remote&path=vnc-stream; }}
         location = /desktop/websockify {{
             if ($ws_origin_ok = 0) {{ return 403; }}
             {protected}
@@ -244,6 +244,21 @@ http {{
         # rewrites to the same upstream websockify endpoint. websockify only
         # accepts WS on its exact /websockify path, hence the rewrite here.
         location = /desktop/stream {{
+            if ($ws_origin_ok = 0) {{ return 403; }}
+            {protected}
+            proxy_pass http://127.0.0.1:{desktop_port}/websockify;
+            proxy_http_version 1.1;
+            proxy_set_header Upgrade $http_upgrade;
+            proxy_set_header Connection $connection_upgrade;
+            proxy_set_header Host 127.0.0.1;
+            proxy_set_header Authorization "";
+            proxy_buffering off;
+            proxy_read_timeout 3600s;
+            proxy_send_timeout 3600s;
+        }}
+        # Root-level alias: the edge gateway intercepts the whole /desktop/
+        # namespace; a path outside it may pass through untouched.
+        location = /vnc-stream {{
             if ($ws_origin_ok = 0) {{ return 403; }}
             {protected}
             proxy_pass http://127.0.0.1:{desktop_port}/websockify;
@@ -555,7 +570,7 @@ code{{background:#f2f2f2;padding:.1rem .3rem}} .m{{color:#555;font-size:.85rem}}
 </style><body><main><h1>Hermes Desktop</h1>
 <p id="state" class="m">Checking readiness…</p><ul id="checks"></ul>
 <p id="versions" class="m"></p>
-<p><a href="/desktop/vnc.html?autoconnect=1&amp;resize=remote&amp;path=desktop/stream">Open KDE desktop</a></p>
+<p><a href="/desktop/vnc.html?autoconnect=1&amp;resize=remote&amp;path=vnc-stream">Open KDE desktop</a></p>
 <p>In the desktop browser, open <code>http://127.0.0.1:8648</code> for Hermes Studio.</p>
 <p class="m">The VNC password is separate from the web sign-in password.
 This is not multi-factor authentication.</p>

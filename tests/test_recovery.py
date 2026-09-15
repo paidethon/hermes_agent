@@ -132,6 +132,9 @@ class ConfigurationTests(unittest.TestCase):
         self.assertIn('proxy_pass http://127.0.0.1:6080/websockify;', stream)
         self.assertIn('proxy_set_header Upgrade $http_upgrade;', stream)
         self.assertIn('auth_request /internal/authelia/authz;', stream)
+        root = conf.split('location = /vnc-stream', 1)[1].split('\n        }', 1)[0]
+        self.assertIn('proxy_pass http://127.0.0.1:6080/websockify;', root)
+        self.assertIn('X-Studio-Token', conf)
 
     def test_install_uses_final_path(self):
         dockerfile = (ROOT / 'Dockerfile').read_text()
