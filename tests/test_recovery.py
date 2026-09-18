@@ -136,6 +136,15 @@ class ConfigurationTests(unittest.TestCase):
         self.assertIn('proxy_pass http://127.0.0.1:6080/websockify;', root)
         self.assertIn('X-Studio-Token', conf)
 
+    def test_platform_mounted_home_flows_into_supervisor(self):
+        # Spaces that mount the persistent volume ON /home/hermes (EXDEV on
+        # rename) must see every service reference move to DATA_ROOT/home.
+        raw = bootstrap.render_supervisor(Path('/mnt/workspace/test-v2'), '1280x800', '0',
+                                          home_dir='/mnt/workspace/test-v2/home')
+        self.assertIn('HOME="/mnt/workspace/test-v2/home"', raw)
+        self.assertIn('-rfbauth /mnt/workspace/test-v2/home/.vnc/passwd', raw)
+        self.assertIn('directory=/mnt/workspace/test-v2/home', raw)
+
     def test_install_uses_final_path(self):
         dockerfile = (ROOT / 'Dockerfile').read_text()
         self.assertNotIn('/opt/hermes-src', dockerfile)
