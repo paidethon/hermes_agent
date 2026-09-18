@@ -6,6 +6,7 @@ Never import or delete the legacy /mnt/workspace/zephyr tree automatically.
 """
 from __future__ import annotations
 
+import errno
 import html
 import ipaddress
 import json
@@ -300,11 +301,12 @@ def _env_line(pairs: list[tuple[str, str]]) -> str:
 
 
 def render_supervisor(root: Path, geometry: str, no_sandbox: str,
-                      agent_env: dict[str, str] | None = None) -> str:
+                      agent_env: dict[str, str] | None = None,
+                      home_dir: str = '/home/hermes') -> str:
     agent_env = {key: str(agent_env.get(key, '')) for key in AGENT_ENV_KEYS} \
         if agent_env else {key: '' for key in AGENT_ENV_KEYS}
     session = [
-        ('HOME', '/home/hermes'), ('USER', 'hermes'), ('LOGNAME', 'hermes'),
+        ('HOME', home_dir), ('USER', 'hermes'), ('LOGNAME', 'hermes'),
         ('DISPLAY', ':1'),
         ('XAUTHORITY', '/run/user/1001/.Xauthority'),
         ('XDG_RUNTIME_DIR', '/run/user/1001'),
@@ -333,7 +335,7 @@ def render_supervisor(root: Path, geometry: str, no_sandbox: str,
          _env_line(root_env + blank_extra)),
         ('vnc', 'hermes', '/usr/bin/Xtigervnc :1 -localhost=1 -rfbport 5901 '
          f'-geometry {geometry} -depth 24 -SecurityTypes VncAuth '
-         '-rfbauth /home/hermes/.vnc/passwd -auth /run/user/1001/.Xauthority -nolisten tcp', 20,
+         f'-rfbauth {home_dir}/.vnc/passwd -auth /run/user/1001/.Xauthority -nolisten tcp', 20,
          session_env()),
         ('desktop', 'hermes', '/opt/recovery/desktop.sh', 30,
          _env_line(session + desktop_extra)),
@@ -373,7 +375,7 @@ serverurl=unix:///run/zephyr/supervisor.sock
 [program:{name}]
 command={command}
 user={user}
-directory={"/home/hermes" if user == "hermes" else "/"}
+directory={home_dir if user == "hermes" else "/"}
 environment={program_env}
 priority={priority}
 autostart=true
@@ -417,7 +419,15 @@ def initialize_auth(root: Path, username: str, password: str) -> None:
     os.chmod(path, 0o600)
 
 
-def initialize_home(root: Path) -> None:
+def initialize_home(root: Path) -> Path:
+    """Prepare the desktop home; returns the real home path for services.
+
+    Normal platforms: /home/hermes is symlinked to DATA_ROOT/home and the
+    image's original home is preserved as /home/hermes.image-seed.
+    Some platforms mount the persistent volume directly ON /home/hermes: a
+    rename then fails with EXDEV (cross-device). In that case the mount point
+    is left untouched and DATA_ROOT/home itself becomes the service HOME.
+    """
     home = root / 'home'
     new_home = not home.exists()
     directory(home, APP_UID, APP_GID, 0o700)
@@ -427,6 +437,7 @@ def initialize_home(root: Path) -> None:
             if not item.is_symlink():
                 os.chown(item, APP_UID, APP_GID)
     target = Path('/home/hermes')
+    home_mode = 'symlink'
     if target.is_symlink():
         if target.resolve() != home.resolve():
             raise ValueError('/home/hermes points to a different data directory')
@@ -435,8 +446,18 @@ def initialize_home(root: Path) -> None:
         seed_backup = Path('/home/hermes.image-seed')
         if seed_backup.exists():
             raise ValueError('Unexpected non-symlink home: refusing to overwrite it')
-        target.rename(seed_backup)
-        target.symlink_to(home, target_is_directory=True)
+        try:
+            target.rename(seed_backup)
+            target.symlink_to(home, target_is_directory=True)
+        except OSError as exc:
+            if exc.errno != errno.EXDEV:
+                raise
+            # /home/hermes is a separate mount (platform-mounted persistent
+            # volume): it cannot be replaced, so service HOME moves to
+            # DATA_ROOT/home and the mount point is left alone.
+            home_mode = 'mount'
+            print('bootstrap: /home/hermes is a mount point (EXDEV); '
+                  'using DATA_ROOT/home as the service home', flush=True)
     else:
         target.symlink_to(home, target_is_directory=True)
     for child in ('Desktop', '.vnc', '.config', '.local'):
@@ -475,6 +496,7 @@ def initialize_home(root: Path) -> None:
     subprocess.run([gosu, 'hermes', '/usr/bin/xauth', '-f', str(xauthority),
                     'add', ':1', '.', secrets.token_hex(16)], check=True)
     initialize_vnc_password(home, os.environ.get('VNC_PASSWORD', ''))
+    return str(target) if home_mode == 'symlink' else str(home)
 
 
 def initialize_vnc_password(home: Path, password: str) -> None:
@@ -543,13 +565,13 @@ def main() -> None:
     else:
         keys = {name: secrets.token_hex(32) for name in ('session', 'storage')}
         atomic_write(keys_file, json.dumps(keys), AUTH_UID, AUTH_GID)
-    initialize_home(root)
+    home_dir = initialize_home(root)
     initialize_desktop_auth()
     initialize_model(root)
     atomic_write(RUN / 'authelia.yml', render_authelia(root, origin, host, keys), AUTH_UID, AUTH_GID)
     atomic_write(RUN / 'nginx.conf', render_nginx(origin, host, authority), 0, 0, 0o644)
     agent_env = {key: os.environ.get(key, '') for key in AGENT_ENV_KEYS}
-    supervisor_conf = render_supervisor(root, geometry, no_sandbox, agent_env)
+    supervisor_conf = render_supervisor(root, geometry, no_sandbox, agent_env, home_dir)
     atomic_write(RUN / 'supervisord.conf', supervisor_conf, 0, 0, 0o600)
     # Remote-diagnosability: the effective VNC command line (no secrets in it)
     # is served through /readyz so a tunnel probe can verify what is running.
