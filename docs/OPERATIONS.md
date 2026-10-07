@@ -7,10 +7,12 @@
 ```bash
 curl -fsS http://127.0.0.1:7860/healthz   # Nginx 活着（无鉴权）
 curl -fsS http://127.0.0.1:7860/readyz    # 全部就绪才 200（无鉴权）
-python3 /opt/recovery/health.py --once    # 容器内分层健康七项探针
+python3 /opt/recovery/health.py --once    # 容器内分层健康九项探针
 ```
 
-`/readyz` 聚合七项探针：`auth`（Authelia）、`novnc`、`studio`、`vnc`（5901 可达）、
+`/readyz` 聚合九项探针：`auth`（Authelia）、`novnc`、`studio`、`vnc`（Xtigervnc 进程
+存活；**不要对 5901 发 TCP 探测**——TigerVNC 把未认证即断开的连接计入 security
+failure，会把全体 noVNC 用户共用的 127.0.0.1 拉黑）、`x`（xdpyinfo）、`dbus`（会话总线进程）、
 `desktop`（plasmashell 进程）、`kwin`（kwin_x11 进程）、`wm`（EWMH root 接管，
 `xprop -root _NET_SUPPORTING_WM_CHECK`）。**`plasmashell` 存活 ≠ 桌面可用**：
 没有窗口管理器时窗口没有标题栏、不能拖动/最大化/关闭，所以 kwin 与 wm 任一为 false
