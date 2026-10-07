@@ -51,7 +51,11 @@ Hermes Agent 本体（venv `/opt/hermes-venv`，`hermes` CLI）不在路由表�
 ## 九探针 readiness
 
 `/readyz` 聚合九项，任一为 false 即 503：`auth`（Authelia）、`novnc`、`studio`、
-`vnc`（5901 TCP）、`x`（xdpyinfo，X 服务器真的响应协议）、`dbus`（会话总线进程）、
+`vnc`（Xtigervnc 进程存活——**禁止对 5901 发 TCP 探测**：TigerVNC 把未完成认证即断开的
+连接计入 security failure，而 `-localhost=1` 下所有 websockify 客户端源地址都是
+127.0.0.1，探测等于把全体 noVNC 用户共用地址拉黑，形成 "Too many security failures"
+自锁；Xtigervnc 的 X 协议与 RFB 共用同一事件循环，进程存活 + `x` 的 xdpyinfo 实测
+已覆盖 "RFB 端点在服务"）、`x`（xdpyinfo，X 服务器真的响应协议）、`dbus`（会话总线进程）、
 `desktop`（plasmashell）、`kwin`（kwin_x11）、`wm`（EWMH root 接管）。
 进程级存活探不出的故障由 `x`/`wm` 兜底：X 挂死时进程都在但无人能画；
 WM 死了窗口没有标题栏。

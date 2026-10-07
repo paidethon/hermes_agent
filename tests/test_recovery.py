@@ -260,21 +260,21 @@ class DesktopReadinessTests(unittest.TestCase):
             self.assertTrue(health.desktop_ok())
 
     def test_checks_gate_readiness_on_window_manager(self):
-        probes = {'http_ok': True, 'tcp_ok': True, 'wm_ok': True, 'x_ok': True, 'dbus_ok': True}
+        probes = {'http_ok': True, 'wm_ok': True, 'x_ok': True, 'dbus_ok': True}
         with patch.object(health, 'http_ok', return_value=probes['http_ok']), \
-                patch.object(health, 'tcp_ok', return_value=probes['tcp_ok']), \
                 patch.object(health, 'wm_ok', return_value=probes['wm_ok']), \
                 patch.object(health, 'x_ok', return_value=probes['x_ok']), \
                 patch.object(health, 'dbus_ok', return_value=probes['dbus_ok']), \
                 patch.object(health, 'process_ok',
-                             side_effect=lambda binary: binary == 'plasmashell'):
+                             side_effect=lambda binary: binary in ('plasmashell',
+                                                                   'Xtigervnc')):
             state = health.checks()
             self.assertTrue(state['desktop'])
+            self.assertTrue(state['vnc'])
             self.assertFalse(state['kwin'])
             self.assertFalse(all(state.values()),
                              'plasmashell alive with kwin dead must not be ready')
         with patch.object(health, 'http_ok', return_value=True), \
-                patch.object(health, 'tcp_ok', return_value=True), \
                 patch.object(health, 'wm_ok', return_value=True), \
                 patch.object(health, 'x_ok', return_value=True), \
                 patch.object(health, 'dbus_ok', return_value=True), \
@@ -288,11 +288,36 @@ class DesktopReadinessTests(unittest.TestCase):
                 patch.object(health, 'process_ok', return_value=True), \
                 patch.object(health, 'wm_ok', return_value=True), \
                 patch.object(health, 'http_ok', return_value=True), \
-                patch.object(health, 'tcp_ok', return_value=True), \
                 patch.object(health, 'dbus_ok', return_value=True):
             state = health.checks()
         self.assertFalse(state['x'])
         self.assertFalse(all(state.values()))
+
+    def test_vnc_probe_never_opens_an_rfb_connection(self):
+        # The 2026-10-07 incident: health/watchdog probes TCP-connecting 5901
+        # and closing before auth counted as TigerVNC security failures; with
+        # -localhost=1 every websockify client shares 127.0.0.1, so the
+        # container's own probes blacklisted noVNC permanently ("Too many
+        # security failures"). The probe must stay process-based; a TCP probe
+        # would also fail the first assertion below on any machine where
+        # nothing listens on 5901.
+        with patch.object(health, 'http_ok', return_value=True), \
+                patch.object(health, 'wm_ok', return_value=True), \
+                patch.object(health, 'x_ok', return_value=True), \
+                patch.object(health, 'dbus_ok', return_value=True), \
+                patch.object(health, 'process_ok', return_value=True):
+            self.assertTrue(health.checks()['vnc'])
+        with patch.object(health, 'http_ok', return_value=True), \
+                patch.object(health, 'wm_ok', return_value=True), \
+                patch.object(health, 'x_ok', return_value=True), \
+                patch.object(health, 'dbus_ok', return_value=True), \
+                patch.object(health, 'process_ok',
+                          side_effect=lambda binary: binary != 'Xtigervnc'):
+            self.assertFalse(health.checks()['vnc'])
+        for source in ('recovery/health.py', 'recovery/desktop-watchdog.py'):
+            self.assertNotIn('create_connection', (ROOT / source).read_text(encoding='utf-8'),
+                             f'{source} must not open raw TCP connections: an '
+                             'unauthenticated RFB probe self-blacklists noVNC')
 
     def readyz_status(self, state: dict) -> tuple[int, dict]:
         server = ThreadingHTTPServer(('127.0.0.1', 0), health.Handler)

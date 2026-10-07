@@ -27,7 +27,6 @@ import json
 import os
 import shutil
 import signal
-import socket
 import subprocess
 import sys
 import time
@@ -95,12 +94,14 @@ def process_state(binary: str) -> str:
     return out.strip()[:1] if ok else ''
 
 
-def tcp_ok(port: int) -> bool:
-    try:
-        with socket.create_connection(('127.0.0.1', port), timeout=3):
-            return True
-    except OSError:
-        return False
+def vnc_ok() -> bool:
+    # Never TCP-probe 5901: TigerVNC counts a connection closed before
+    # authentication as a security failure, and with -localhost=1 every
+    # websockify client shares 127.0.0.1, so probing the RFB port here
+    # blacklisted the one address all noVNC users come from. A dead or
+    # wedged Xtigervnc still fails x_ok (xdpyinfo), so the 'x' ladder
+    # keeps covering server hangs; this check covers process loss.
+    return run(['/usr/bin/pgrep', '-u', APP_UID, '-x', 'Xtigervnc'])[0]
 
 
 def http_ok(port: int, path: str) -> bool:
@@ -120,7 +121,7 @@ def probe_all() -> dict[str, object]:
         'wm': wm_ok(),
         'plasma_state': process_state('plasmashell'),
         'kwin_state': process_state('kwin_x11'),
-        'vnc': tcp_ok(5901),
+        'vnc': vnc_ok(),
         'novnc': http_ok(6080, '/vnc.html'),
         'studio': http_ok(8648, '/'),
     }

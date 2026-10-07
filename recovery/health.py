@@ -14,7 +14,6 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 import json
 import os
 from pathlib import Path
-import socket
 import subprocess
 import sys
 from urllib.error import URLError, HTTPError
@@ -32,14 +31,6 @@ def http_ok(url: str) -> bool:
         with build_opener(ProxyHandler({})).open(url, timeout=2) as response:
             return response.status == 200
     except (URLError, HTTPError, OSError, TimeoutError):
-        return False
-
-
-def tcp_ok() -> bool:
-    try:
-        with socket.create_connection(('127.0.0.1', 5901), timeout=2):
-            return True
-    except OSError:
         return False
 
 
@@ -119,7 +110,15 @@ def checks() -> dict[str, bool]:
         'auth': lambda: http_ok('http://127.0.0.1:9091/auth/api/health'),
         'novnc': lambda: http_ok('http://127.0.0.1:6080/vnc.html'),
         'studio': lambda: http_ok('http://127.0.0.1:8648/'),
-        'vnc': tcp_ok,
+        # Never TCP-probe 5901: TigerVNC counts a connection closed before
+        # authentication as a security failure, and with -localhost=1 every
+        # websockify client shares 127.0.0.1, so probing the RFB port here
+        # blacklisted the one address all noVNC users come from (permanent
+        # "Too many security failures"). Xtigervnc serves X protocol and RFB
+        # from the same event loop, so this process check plus x_ok's live
+        # protocol roundtrip answers "is the VNC endpoint serving" without
+        # opening one.
+        'vnc': lambda: process_ok('Xtigervnc'),
         'x': x_ok,
         'dbus': dbus_ok,
         'desktop': lambda: process_ok('plasmashell'),
